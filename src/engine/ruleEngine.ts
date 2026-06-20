@@ -66,13 +66,19 @@ function matchesKeyword(text: string, keywords: string[], matchType: string): bo
 }
 
 export async function processWebhookEvent(payload: WebhookPayload): Promise<void> {
-  for (const entry of payload.entry) {
-    const pageId = entry.id;
+  const isInstagram = payload.object === 'instagram';
 
-    // Find which creator owns this page
-    const creatorAccount = await CreatorAccount.findOne({ pageId, isConnected: true });
+  for (const entry of payload.entry) {
+    const entryId = entry.id;
+
+    // Find which creator owns this account
+    const query = isInstagram 
+      ? { instagramBusinessId: entryId, isConnected: true }
+      : { pageId: entryId, isConnected: true };
+
+    const creatorAccount = await CreatorAccount.findOne(query);
     if (!creatorAccount) {
-      logger.debug(`No creator found for page ${pageId}`);
+      logger.debug(`No creator found for entry ${entryId} (object: ${payload.object})`);
       continue;
     }
 
