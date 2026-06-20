@@ -148,6 +148,15 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
   const igProfile = igRes.data as { id: string; username: string; name: string; profile_picture_url: string; followers_count: number };
 
+  // Fetch exactly which permissions the user granted
+  const permsRes = await axios.get(`${META_API}/me/permissions`, {
+    params: { access_token: longLivedToken },
+  });
+  
+  const grantedScopes = (permsRes.data as { data: Array<{ permission: string; status: string }> }).data
+    .filter(p => p.status === 'granted')
+    .map(p => p.permission);
+
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
@@ -164,7 +173,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       profilePic: igProfile.profile_picture_url,
       followersCount: igProfile.followers_count,
       isConnected: true,
-      scopes: ['instagram_basic', 'instagram_manage_messages', 'pages_show_list', 'pages_manage_metadata', 'business_management'],
+      scopes: grantedScopes,
     },
     { upsert: true, new: true }
   );
