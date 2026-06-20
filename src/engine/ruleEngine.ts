@@ -83,7 +83,8 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
       for (const change of entry.changes) {
         if (change.field === 'comments' || change.field === 'feed') {
           const commentData = change.value;
-          if (commentData.verb === 'add' && commentData.from && commentData.text) {
+          // Instagram comments don't have a 'verb' field, Facebook feeds use 'verb === add'
+          if ((!commentData.verb || commentData.verb === 'add') && commentData.from && commentData.text) {
             const comment: CommentEvent = {
               from: commentData.from,
               text: commentData.text,

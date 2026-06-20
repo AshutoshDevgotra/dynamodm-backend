@@ -129,10 +129,10 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
   // Get Facebook pages
   const pagesRes = await axios.get(`${META_API}/me/accounts`, {
-    params: { access_token: longLivedToken, fields: 'id,name,instagram_business_account' },
+    params: { access_token: longLivedToken, fields: 'id,name,access_token,instagram_business_account' },
   });
 
-  const pages = (pagesRes.data as { data: Array<{ id: string; name: string; instagram_business_account?: { id: string } }> }).data;
+  const pages = (pagesRes.data as { data: Array<{ id: string; name: string; access_token: string; instagram_business_account?: { id: string } }> }).data;
   const pageWithIG = pages.find((p) => p.instagram_business_account);
 
   if (!pageWithIG) {
@@ -148,7 +148,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
   const igProfile = igRes.data as { id: string; username: string; name: string; profile_picture_url: string; followers_count: number };
 
-  const encryptedToken = encryptToken(longLivedToken);
+  const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
   await CreatorAccount.findOneAndUpdate(
@@ -221,15 +221,19 @@ router.post('/webhook', (req: Request, res: Response): void => {
 
   const rawBody = (req as any).rawBody || JSON.stringify(req.body);
   const expectedSig = `sha256=${crypto
-    .createHmac('sha256', process.env.META_WEBHOOK_SECRET as string)
+    .createHmac('sha256', process.env.META_APP_SECRET as string)
     .update(rawBody)
     .digest('hex')}`;
 
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
     logger.warn('⚠️ Invalid webhook signature received');
+    logger.debug(`Signature: ${signature}`);
+    logger.debug(`Expected: ${expectedSig}`);
     res.status(401).json({ success: false, message: 'Invalid signature.' });
     return;
   }
+
+  logger.debug('✅ Valid webhook payload received', { body: req.body });
 
   // Acknowledge immediately and process asynchronously
   res.status(200).send('EVENT_RECEIVED');
