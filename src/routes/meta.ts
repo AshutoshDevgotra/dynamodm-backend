@@ -226,10 +226,6 @@ router.post('/webhook', (req: Request, res: Response): void => {
     .digest('hex')}`;
 
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
-    try {
-      const fs = require('fs');
-      fs.appendFileSync('webhook_debug.log', JSON.stringify({ time: new Date().toISOString(), error: 'Invalid signature', signature, expectedSig, body: req.body }) + '\n');
-    } catch (err) {}
     logger.warn('⚠️ Invalid webhook signature received');
     res.status(401).json({ success: false, message: 'Invalid signature.' });
     return;
@@ -237,12 +233,6 @@ router.post('/webhook', (req: Request, res: Response): void => {
 
   // Acknowledge immediately and process asynchronously
   res.status(200).send('EVENT_RECEIVED');
-
-  // TEMPORARY DEBUG: Dump the payload to a file
-  try {
-    const fs = require('fs');
-    fs.appendFileSync('webhook_debug.log', JSON.stringify({ time: new Date().toISOString(), body: req.body }) + '\n');
-  } catch (err) {}
 
   const body = req.body as { object: string; entry: Array<{ id: string; changes?: unknown[]; messaging?: unknown[] }> };
   if (body.object === 'instagram' || body.object === 'page') {
