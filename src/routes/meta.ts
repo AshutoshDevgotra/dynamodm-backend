@@ -160,18 +160,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
-  // Install the app on the Facebook Page to enable webhooks (Instagram webhooks inherit from this installation)
-  try {
-    await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
-      params: {
-        subscribed_fields: 'name', // We just need to install the app on the page. 'name' doesn't require Messenger permissions.
-        access_token: pageWithIG.access_token
-      }
-    });
-    logger.info(`✅ Successfully subscribed to webhooks for page ${pageWithIG.id}`);
-  } catch (err: any) {
-    logger.error(`❌ Failed to subscribe to page webhooks: ${err?.response?.data?.error?.message || err.message}`);
-  }
+  // NOTE: Instagram Webhooks CANNOT be configured via the /subscribed_apps API.
+  // Per Meta docs: "You must use your app dashboard to subscribe to Instagram Webhooks."
+  // The webhook subscription for comments/messages is configured once in the Meta App Dashboard
+  // and applies globally to all connected Instagram accounts automatically.
+  logger.info(`✅ OAuth complete for page ${pageWithIG.id} / IG ${igBusinessId}`);
 
   await CreatorAccount.findOneAndUpdate(
     { userId: userId },
