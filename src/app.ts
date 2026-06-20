@@ -43,7 +43,11 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ─── Rate Limiting ─────────────────────────────────────────────────────────────
-app.use(globalLimiter);
+// Skip global rate limiter for Meta webhook (it has its own limiter + HMAC verification)
+app.use((req, res, next) => {
+  if (req.path === '/api/meta/webhook') return next();
+  return globalLimiter(req, res, next);
+});
 
 // ─── Health Check ──────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

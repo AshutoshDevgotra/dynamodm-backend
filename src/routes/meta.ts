@@ -227,6 +227,7 @@ router.get('/webhook', (req: Request, res: Response): void => {
 
 // ─── POST /api/meta/webhook (event receiver) ─────────────────────────────────
 router.post('/webhook', (req: Request, res: Response): void => {
+  logger.info('📩 Webhook POST received', { headers: { 'x-hub-signature-256': req.headers['x-hub-signature-256']?.toString().slice(0, 20) } });
   // Verify HMAC signature
   const signature = req.headers['x-hub-signature-256'] as string;
   if (!signature) {
@@ -241,14 +242,12 @@ router.post('/webhook', (req: Request, res: Response): void => {
     .digest('hex')}`;
 
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
-    logger.warn('⚠️ Invalid webhook signature received');
-    logger.debug(`Signature: ${signature}`);
-    logger.debug(`Expected: ${expectedSig}`);
+    logger.warn('⚠️ Invalid webhook signature received', { receivedSig: signature.slice(0, 20) });
     res.status(401).json({ success: false, message: 'Invalid signature.' });
     return;
   }
 
-  logger.debug('✅ Valid webhook payload received', { body: req.body });
+  logger.info('✅ Valid webhook payload received', { object: (req.body as any)?.object, entryCount: (req.body as any)?.entry?.length });
 
   // Acknowledge immediately and process asynchronously
   res.status(200).send('EVENT_RECEIVED');
