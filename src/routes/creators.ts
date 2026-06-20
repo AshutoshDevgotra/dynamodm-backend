@@ -5,6 +5,11 @@ import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
 
+// GET /api/creators/datadeletion — Meta data deletion callback (must come before /:username)
+router.get('/datadeletion', (_req: Request, res: Response): void => {
+  res.json({ success: true, message: 'Data deletion instructions available at https://dynamodm-frontend.vercel.app/privacy' });
+});
+
 // GET /api/creators/:username
 router.get('/:username', async (req: Request, res: Response): Promise<void> => {
   const account = await CreatorAccount.findOne({ username: req.params.username, isConnected: true });
