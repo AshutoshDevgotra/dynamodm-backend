@@ -160,6 +160,19 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
+  // Install the app on the Facebook Page to enable webhooks
+  try {
+    await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
+      params: {
+        subscribed_fields: 'messages,feed,comments',
+        access_token: pageWithIG.access_token
+      }
+    });
+    logger.info(`✅ Successfully subscribed to webhooks for page ${pageWithIG.id}`);
+  } catch (err: any) {
+    logger.error(`❌ Failed to subscribe to page webhooks: ${err?.response?.data?.error?.message || err.message}`);
+  }
+
   await CreatorAccount.findOneAndUpdate(
     { userId: userId },
     {
