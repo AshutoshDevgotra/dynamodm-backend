@@ -164,7 +164,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       profilePic: igProfile.profile_picture_url,
       followersCount: igProfile.followers_count,
       isConnected: true,
-      scopes: ['instagram_basic', 'instagram_manage_messages', 'pages_show_list', 'pages_manage_metadata'],
+      scopes: ['instagram_basic', 'instagram_manage_messages', 'pages_show_list', 'pages_manage_metadata', 'business_management'],
     },
     { upsert: true, new: true }
   );
