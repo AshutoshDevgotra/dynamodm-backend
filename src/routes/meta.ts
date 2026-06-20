@@ -160,10 +160,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
-  // Install the app on the Facebook Page to enable webhooks
+  // Install the app on the Facebook Page to enable webhooks (Instagram webhooks inherit from this installation)
   try {
     await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
       params: {
+        subscribed_fields: 'name', // We just need to install the app on the page. 'name' doesn't require Messenger permissions.
         access_token: pageWithIG.access_token
       }
     });
