@@ -42,12 +42,19 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
 
   const planConfig = PLANS[plan];
 
-  const order = await (razorpay.orders.create as Function)({
-    amount: planConfig.amount,
-    currency: 'INR',
-    receipt: `receipt_${req.user!.id}_${Date.now()}`,
-    notes: { userId: req.user!.id, plan },
-  });
+  let order: any;
+  try {
+    order = await (razorpay.orders.create as Function)({
+      amount: planConfig.amount,
+      currency: 'INR',
+      receipt: `receipt_${req.user!.id}_${Date.now()}`,
+      notes: { userId: req.user!.id, plan },
+    });
+  } catch (razorErr: any) {
+    const errMsg = razorErr?.error?.description || razorErr?.message || 'Razorpay order creation failed';
+    logger.error(`❌ Razorpay create order error: ${errMsg}`, razorErr?.error);
+    throw new AppError(`Payment gateway error: ${errMsg}`, 502);
+  }
 
   // Store a pending subscription record so we can look it up on verify
   await Subscription.findOneAndUpdate(
