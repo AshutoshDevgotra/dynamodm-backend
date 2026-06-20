@@ -14,9 +14,10 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET as string,
 });
 
-const PLANS: Record<string, { amount: number; planId: string; name: string }> = {
-  pro: { amount: 99900, planId: process.env.RAZORPAY_PRO_PLAN_ID || '', name: 'DynamoDM Pro' },
-  premium: { amount: 249900, planId: process.env.RAZORPAY_PREMIUM_PLAN_ID || '', name: 'DynamoDM Premium' },
+// Plan definitions — amounts in paise (INR × 100)
+const PLANS: Record<string, { amount: number; name: string; durationDays: number }> = {
+  pro: { amount: 99900, name: 'DynamoDM Pro', durationDays: 30 },
+  premium: { amount: 249900, name: 'DynamoDM Premium', durationDays: 30 },
 };
 
 // GET /api/payments/plans
@@ -33,88 +34,125 @@ router.get('/plans', (_req: Request, res: Response): void => {
   });
 });
 
-// POST /api/payments/subscribe
-router.post('/subscribe', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+// POST /api/payments/create-order
+// Creates a Razorpay order. Frontend uses this to open the checkout modal.
+router.post('/create-order', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   const { plan } = req.body as { plan: 'pro' | 'premium' };
   if (!PLANS[plan]) throw new AppError('Invalid plan selected.', 400);
 
   const planConfig = PLANS[plan];
-  
-  if (!planConfig.planId) {
-    // Mock Razorpay subscription if no plan ID is configured
-    const mockSubId = 'sub_mock_' + Math.random().toString(36).substr(2, 9);
-    await Subscription.findOneAndUpdate(
-      { userId: req.user!.id },
-      { razorpaySubscriptionId: mockSubId, plan, status: 'trialing' },
-      { upsert: true }
-    );
-    res.json({ success: true, data: { subscriptionId: mockSubId, keyId: 'mock' } });
-    return;
-  }
 
-  const subscription = await (razorpay.subscriptions.create as Function)({
-    plan_id: planConfig.planId,
-    customer_notify: 1,
-    total_count: 12,
+  const order = await (razorpay.orders.create as Function)({
+    amount: planConfig.amount,
+    currency: 'INR',
+    receipt: `receipt_${req.user!.id}_${Date.now()}`,
     notes: { userId: req.user!.id, plan },
   });
 
+  // Store a pending subscription record so we can look it up on verify
   await Subscription.findOneAndUpdate(
     { userId: req.user!.id },
-    { razorpaySubscriptionId: subscription.id, plan, status: 'trialing' },
-    { upsert: true }
+    {
+      userId: req.user!.id,
+      plan,
+      status: 'paused', // Stays paused until payment is verified
+      razorpaySubscriptionId: order.id, // Store order ID here temporarily
+    },
+    { upsert: true, new: true }
   );
 
-  res.json({ success: true, data: { subscriptionId: subscription.id, keyId: process.env.RAZORPAY_KEY_ID } });
+  res.json({
+    success: true,
+    data: {
+      orderId: order.id,
+      amount: planConfig.amount,
+      currency: 'INR',
+      keyId: process.env.RAZORPAY_KEY_ID,
+      planName: planConfig.name,
+    },
+  });
 });
 
 // POST /api/payments/verify
+// Called by frontend after Razorpay checkout completes. Verifies HMAC and activates subscription.
 router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature, isMock } = req.body;
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
-  if (!isMock) {
-    const body = razorpay_payment_id + '|' + razorpay_subscription_id;
-    const expected = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET as string).update(body).digest('hex');
-
-    if (expected !== razorpay_signature) throw new AppError('Invalid payment signature.', 400);
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    throw new AppError('Missing payment verification fields.', 400);
   }
 
-  const subscription = await Subscription.findOne({ userId: req.user!.id });
-  if (subscription) {
-    subscription.status = 'active';
-    await subscription.save();
+  // Verify HMAC signature — this is tamper-proof, cannot be faked without the key secret
+  const body = razorpay_order_id + '|' + razorpay_payment_id;
+  const expected = crypto
+    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET as string)
+    .update(body)
+    .digest('hex');
+
+  if (expected !== razorpay_signature) {
+    logger.warn(`⚠️ Invalid Razorpay payment signature for user ${req.user!.id}`);
+    throw new AppError('Invalid payment signature. Payment not verified.', 400);
   }
 
+  // Find the pending subscription for this user
+  const subscription = await Subscription.findOne({ userId: req.user!.id, razorpaySubscriptionId: razorpay_order_id });
+  if (!subscription) throw new AppError('Subscription record not found. Please contact support.', 404);
+
+  const now = new Date();
+  const planConfig = PLANS[subscription.plan];
+
+  // Activate the subscription
+  subscription.status = 'active';
+  subscription.razorpaySubscriptionId = razorpay_payment_id; // Now store the payment ID
+  subscription.currentPeriodStart = now;
+  subscription.currentPeriodEnd = new Date(now.getTime() + (planConfig?.durationDays || 30) * 24 * 60 * 60 * 1000);
+  await subscription.save();
+
+  // Record the payment
   await Payment.create({
     userId: req.user!.id,
-    subscriptionId: subscription?._id,
+    subscriptionId: subscription._id,
     razorpayPaymentId: razorpay_payment_id,
     status: 'captured',
-    amount: PLANS[subscription?.plan || 'pro']?.amount || 0,
+    amount: planConfig?.amount || 0,
     currency: 'INR',
   });
 
-  res.json({ success: true, message: 'Payment verified. Subscription activated!' });
+  logger.info(`✅ Payment verified and subscription activated for user ${req.user!.id} (plan: ${subscription.plan})`);
+  res.json({ success: true, message: `Payment verified! ${subscription.plan.toUpperCase()} plan activated.`, data: { plan: subscription.plan } });
 });
 
-// POST /api/payments/webhook (Razorpay webhooks)
+// POST /api/payments/webhook (Razorpay webhooks — server-side events)
 router.post('/webhook', (req: Request, res: Response): void => {
   const signature = req.headers['x-razorpay-signature'] as string;
-  const body = JSON.stringify(req.body);
+  const body = (req as any).rawBody || JSON.stringify(req.body);
   const expected = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET as string).update(body).digest('hex');
 
   if (signature !== expected) {
+    logger.warn('⚠️ Invalid Razorpay webhook signature');
     res.status(400).json({ success: false });
     return;
   }
 
-  const event = req.body as { event: string; payload: { subscription: { entity: { id: string; status: string; notes: { plan: string } } } } };
-  logger.info('Razorpay webhook received:', event.event);
+  const event = req.body as { event: string; payload: any };
+  logger.info(`Razorpay webhook: ${event.event}`);
 
-  // Handle subscription events asynchronously
+  // Handle payment capture from webhook as backup verification
+  if (event.event === 'payment.captured') {
+    const payment = event.payload?.payment?.entity;
+    if (payment?.order_id) {
+      Subscription.findOneAndUpdate(
+        { razorpaySubscriptionId: payment.order_id, status: 'paused' },
+        { status: 'active', razorpaySubscriptionId: payment.id }
+      ).exec();
+    }
+  }
+
   if (event.event === 'subscription.cancelled') {
-    const sub = event.payload.subscription.entity;
-    Subscription.findOneAndUpdate({ razorpaySubscriptionId: sub.id }, { status: 'cancelled' }).exec();
+    const sub = event.payload?.subscription?.entity;
+    if (sub?.id) {
+      Subscription.findOneAndUpdate({ razorpaySubscriptionId: sub.id }, { status: 'cancelled' }).exec();
+    }
   }
 
   res.json({ success: true });
@@ -134,21 +172,14 @@ router.get('/subscription', authenticate, async (req: AuthRequest, res: Response
 
 // POST /api/payments/cancel
 router.post('/cancel', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const subscription = await Subscription.findOne({ userId: req.user!.id });
-  if (!subscription?.razorpaySubscriptionId) throw new AppError('No active subscription.', 400);
+  const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
+  if (!subscription) throw new AppError('No active subscription found.', 400);
 
-  if (!subscription.razorpaySubscriptionId.startsWith('sub_mock')) {
-    try {
-      await (razorpay.subscriptions.cancel as Function)(subscription.razorpaySubscriptionId, { cancel_at_cycle_end: 1 });
-    } catch (e) {
-      logger.error('Razorpay cancel error', e);
-    }
-  }
-  
   subscription.cancelAtPeriodEnd = true;
+  subscription.status = 'cancelled';
   await subscription.save();
 
-  res.json({ success: true, message: 'Subscription will cancel at end of billing period.' });
+  res.json({ success: true, message: 'Subscription cancelled.' });
 });
 
 export default router;

@@ -15,12 +15,17 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/automations
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const subscription = await Subscription.findOne({ userId: req.user!.id });
+  const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
+
+  // Free tier: 1 automation max (no paid subscription)
+  const maxAutomations = subscription?.features?.maxAutomations ?? 1;
   const count = await AutomationRule.countDocuments({ creatorId: req.user!.id });
-  const maxAutomations = subscription?.features.maxAutomations ?? 1;
 
   if (maxAutomations !== -1 && count >= maxAutomations) {
-    throw new AppError(`Your ${subscription?.plan || 'free'} plan allows ${maxAutomations} automation(s). Upgrade to add more.`, 403);
+    if (!subscription) {
+      throw new AppError('Free plan allows 1 automation. Upgrade to Pro or Premium to add more.', 402);
+    }
+    throw new AppError(`Your ${subscription.plan} plan allows ${maxAutomations} automation(s). Upgrade to add more.`, 403);
   }
 
   let parsedKeywords: string[] = [];

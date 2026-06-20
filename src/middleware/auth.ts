@@ -1,6 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
+import { Subscription } from '../models/Subscription';
 
 export type AuthRequest = any;
 
@@ -27,6 +28,25 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired token.' });
   }
+};
+
+/**
+ * Middleware: Ensures the user has an ACTIVE paid subscription.
+ * Free-tier (no subscription or status !== 'active') users are blocked with HTTP 402.
+ * Attach this after `authenticate` on paid-only routes.
+ */
+export const requireSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  const subscription = await Subscription.findOne({ userId: req.user!.id });
+  if (!subscription || subscription.status !== 'active') {
+    res.status(402).json({
+      success: false,
+      message: 'Active subscription required. Please upgrade your plan to access this feature.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    });
+    return;
+  }
+  req.subscription = subscription;
+  next();
 };
 
 export const requireRole = (...roles: string[]) =>
