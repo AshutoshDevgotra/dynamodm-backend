@@ -164,7 +164,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   try {
     await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
       params: {
-        subscribed_fields: 'messages,feed,comments',
+        subscribed_fields: 'messages,feed', // 'comments' is not a valid Page field, IG comments are configured in App Dashboard
         access_token: pageWithIG.access_token
       }
     });
