@@ -7,6 +7,7 @@ import { AppError } from '../middleware/errorHandler';
 import { webhookQueue } from '../workers/queues';
 import { getRedis } from '../config/redis';
 import { logger } from '../utils/logger';
+import { processWebhookEvent } from '../engine/ruleEngine';
 
 const router = Router();
 const META_API = `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}`;
@@ -85,6 +86,7 @@ router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => 
     redirect_uri: process.env.META_REDIRECT_URI as string,
     scope: scopes,
     response_type: 'code',
+    auth_type: 'rerequest', // Forces Meta to ask for missing permissions
     state: token, // Pass token in state
   });
 
@@ -167,10 +169,19 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
-  // NOTE: Instagram Webhooks CANNOT be configured via the /subscribed_apps API.
-  // Per Meta docs: "You must use your app dashboard to subscribe to Instagram Webhooks."
-  // The webhook subscription for comments/messages is configured once in the Meta App Dashboard
-  // and applies globally to all connected Instagram accounts automatically.
+  // Subscribe the App to the Facebook Page to receive live webhooks for the linked Instagram account
+  try {
+    await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
+      params: { 
+        subscribed_fields: 'feed,messages',
+        access_token: pageWithIG.access_token 
+      }
+    });
+    logger.info(`✅ Successfully subscribed App to Facebook Page ${pageWithIG.id} for webhooks`);
+  } catch (err: any) {
+    logger.error('❌ Failed to subscribe App to Facebook Page for webhooks', err?.response?.data || err);
+  }
+
   logger.info(`✅ OAuth complete for page ${pageWithIG.id} / IG ${igBusinessId}`);
 
   await CreatorAccount.findOneAndUpdate(
@@ -364,12 +375,17 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
     const hasMessaging = body.entry?.some(e => e.messaging && e.messaging.length > 0);
 
     if (hasChanges || hasMessaging) {
-      logger.info('📤 Queueing webhook for async processing', {
-        object: body.object,
-        hasChanges,
-        hasMessaging,
-      });
-      webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+      if (process.env.NODE_ENV === 'development') {
+        logger.info('🚀 Processing webhook synchronously in development to bypass shared queue');
+        await processWebhookEvent(body);
+      } else {
+        logger.info('📤 Queueing webhook for async processing', {
+          object: body.object,
+          hasChanges,
+          hasMessaging,
+        });
+        webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+      }
     } else {
       logger.info('ℹ️ Webhook has no changes or messaging to process — skipping queue');
     }

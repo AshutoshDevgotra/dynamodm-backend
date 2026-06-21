@@ -2,6 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export type EventType =
   | 'comment_received'
+  | 'dm_received'
   | 'dm_sent'
   | 'dm_failed'
   | 'lead_captured'
@@ -26,6 +27,7 @@ const AnalyticsEventSchema = new Schema<IAnalyticsEvent>(
       type: String,
       enum: [
         'comment_received',
+        'dm_received',
         'dm_sent',
         'dm_failed',
         'lead_captured',
