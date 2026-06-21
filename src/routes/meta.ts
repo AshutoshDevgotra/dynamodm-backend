@@ -5,6 +5,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { CreatorAccount } from '../models/CreatorAccount';
 import { AppError } from '../middleware/errorHandler';
 import { webhookQueue } from '../workers/queues';
+import { getRedis } from '../config/redis';
 import { logger } from '../utils/logger';
 
 const router = Router();
@@ -63,15 +64,20 @@ router.get('/posts', authenticate, async (req: AuthRequest, res: Response): Prom
   }
 });
 
+// ─── Required scopes for full comment-to-DM automation ───────────────────────
+const REQUIRED_SCOPES = [
+  'instagram_basic',
+  'instagram_manage_comments',              // CRITICAL: enables comment webhook delivery
+  'instagram_manage_messages',              // Required for sending DMs
+  'pages_show_list',
+  'pages_manage_metadata',
+  'pages_read_engagement',                  // Required for reading comment data
+  'business_management',
+];
+
 // ─── GET /api/meta/connect ────────────────────────────────────────────────────
 router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => {
-  const scopes = [
-    'instagram_basic',
-    'instagram_manage_messages',
-    'pages_show_list',
-    'pages_manage_metadata',
-    'business_management',
-  ].join(',');
+  const scopes = REQUIRED_SCOPES.join(',');
 
   const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
   const params = new URLSearchParams({
@@ -82,7 +88,8 @@ router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => 
     state: token, // Pass token in state
   });
 
-  res.json({ success: true, data: { authUrl: `https://www.facebook.com/v20.0/dialog/oauth?${params}` } });
+  const apiVersion = process.env.META_API_VERSION || 'v20.0';
+  res.json({ success: true, data: { authUrl: `https://www.facebook.com/${apiVersion}/dialog/oauth?${params}` } });
 });
 
 // ─── GET /api/meta/callback ───────────────────────────────────────────────────
@@ -211,54 +218,163 @@ router.delete('/disconnect', authenticate, async (req: AuthRequest, res: Respons
   res.json({ success: true, message: 'Instagram account disconnected.' });
 });
 
+// ─── GET /api/meta/check-token — Debug token scopes via Meta API ─────────────
+router.get('/check-token', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+accessToken');
+  if (!account?.accessToken) {
+    throw new AppError('No connected Instagram account found.', 400);
+  }
+
+  const token = decryptToken(account.accessToken);
+
+  try {
+    // Call Meta debug_token endpoint
+    const debugRes = await axios.get(`${META_API}/debug_token`, {
+      params: {
+        input_token: token,
+        access_token: `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`,
+      },
+    });
+
+    const debugData = debugRes.data?.data;
+    const grantedScopes: string[] = debugData?.scopes || [];
+    const missingScopes = REQUIRED_SCOPES.filter(s => !grantedScopes.includes(s));
+
+    res.json({
+      success: true,
+      data: {
+        isValid: debugData?.is_valid,
+        appId: debugData?.app_id,
+        type: debugData?.type,
+        expiresAt: debugData?.expires_at ? new Date(debugData.expires_at * 1000).toISOString() : 'never',
+        grantedScopes,
+        missingScopes,
+        needsReconnect: missingScopes.length > 0,
+        storedScopes: account.scopes,
+        tokenExpiry: account.tokenExpiry,
+      },
+    });
+  } catch (err: any) {
+    logger.error('Failed to debug token', err?.response?.data || err);
+    throw new AppError('Failed to verify token with Meta.', 500);
+  }
+});
+
+// ─── GET /api/meta/debug-webhook — Last 20 webhook payloads ──────────────────
+router.get('/debug-webhook', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const redis = getRedis();
+  const payloads = await redis.lrange('debug:webhook:payloads', 0, 19);
+  res.json({
+    success: true,
+    data: {
+      count: payloads.length,
+      payloads: payloads.map(p => { try { return JSON.parse(p); } catch { return p; } }),
+    },
+  });
+});
+
 // ─── GET /api/meta/webhook (verification) ────────────────────────────────────
 router.get('/webhook', (req: Request, res: Response): void => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === process.env.META_WEBHOOK_SECRET) {
+  // META_VERIFY_TOKEN is the custom verify token set in Meta App Dashboard
+  // Falls back to META_WEBHOOK_SECRET for backward compatibility
+  const verifyToken = process.env.META_VERIFY_TOKEN || process.env.META_WEBHOOK_SECRET;
+
+  if (mode === 'subscribe' && token === verifyToken) {
     logger.info('✅ Meta webhook verified');
     res.status(200).send(challenge);
   } else {
+    logger.warn(`⚠️ Webhook verification failed — mode=${mode}, tokenMatch=${token === verifyToken}`);
     res.status(403).json({ success: false, message: 'Webhook verification failed.' });
   }
 });
 
 // ─── POST /api/meta/webhook (event receiver) ─────────────────────────────────
-router.post('/webhook', (req: Request, res: Response): void => {
-  logger.info('📩 Webhook POST received', { headers: { 'x-hub-signature-256': req.headers['x-hub-signature-256']?.toString().slice(0, 20) } });
-  // Verify HMAC signature
+router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
+  const receivedAt = new Date().toISOString();
+  logger.info(`📩 Webhook POST received at ${receivedAt}`, {
+    headers: {
+      'x-hub-signature-256': req.headers['x-hub-signature-256']?.toString().slice(0, 30),
+      'content-type': req.headers['content-type'],
+    },
+    bodyObject: (req.body as any)?.object,
+    entryCount: (req.body as any)?.entry?.length,
+  });
+
+  // ── Step 1: Verify HMAC signature ──────────────────────────────────────────
   const signature = req.headers['x-hub-signature-256'] as string;
   if (!signature) {
+    logger.warn('❌ Webhook rejected: missing x-hub-signature-256 header');
     res.status(401).json({ success: false, message: 'Missing signature.' });
     return;
   }
 
-  const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+  // CRITICAL: Use raw body bytes, NOT reconstructed JSON
+  const rawBody = (req as any).rawBody;
+  if (!rawBody) {
+    logger.error('❌ rawBody is undefined — express.json verify callback may have failed. Cannot validate signature.');
+    res.status(500).json({ success: false, message: 'Internal webhook error: raw body missing.' });
+    return;
+  }
+
   const expectedSig = `sha256=${crypto
     .createHmac('sha256', process.env.META_APP_SECRET as string)
     .update(rawBody)
     .digest('hex')}`;
 
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
-    logger.warn('⚠️ Invalid webhook signature received', { receivedSig: signature.slice(0, 20) });
+    logger.warn('⚠️ Invalid webhook signature', {
+      receivedSig: signature.slice(0, 30),
+      expectedSig: expectedSig.slice(0, 30),
+      rawBodyLength: rawBody.length,
+    });
     res.status(401).json({ success: false, message: 'Invalid signature.' });
     return;
   }
 
-  logger.info('✅ Valid webhook payload received', { object: (req.body as any)?.object, entryCount: (req.body as any)?.entry?.length });
+  // ── Step 2: Parse and log payload ──────────────────────────────────────────
+  const body = req.body as { object: string; entry: Array<{ id: string; changes?: any[]; messaging?: any[] }> };
+  logger.info('✅ Webhook signature verified', {
+    object: body.object,
+    entryCount: body.entry?.length,
+    entryIds: body.entry?.map(e => e.id),
+    changeFields: body.entry?.flatMap(e => e.changes?.map(c => c.field) || []),
+    hasMessaging: body.entry?.some(e => e.messaging && e.messaging.length > 0),
+  });
 
-  // Acknowledge immediately and process asynchronously
+  // ── Step 3: Store payload in Redis for debugging ───────────────────────────
+  try {
+    const redis = getRedis();
+    const debugPayload = JSON.stringify({ receivedAt, object: body.object, body });
+    await redis.lpush('debug:webhook:payloads', debugPayload);
+    await redis.ltrim('debug:webhook:payloads', 0, 49); // Keep last 50
+  } catch (debugErr) {
+    logger.warn('Failed to store debug webhook payload in Redis', debugErr);
+  }
+
+  // ── Step 4: Acknowledge immediately (Meta requires < 20s response) ────────
   res.status(200).send('EVENT_RECEIVED');
 
-  const body = req.body as { object: string; entry: Array<{ id: string; changes?: unknown[]; messaging?: unknown[] }> };
+  // ── Step 5: Queue for async processing ─────────────────────────────────────
   if (body.object === 'instagram' || body.object === 'page') {
-    // Only queue if there are changes (comments) or messaging (DMs)
-    const hasEvents = body.entry.some(e => (e.changes && e.changes.length > 0) || (e.messaging && e.messaging.length > 0));
-    if (hasEvents) {
+    const hasChanges = body.entry?.some(e => e.changes && e.changes.length > 0);
+    const hasMessaging = body.entry?.some(e => e.messaging && e.messaging.length > 0);
+
+    if (hasChanges || hasMessaging) {
+      logger.info('📤 Queueing webhook for async processing', {
+        object: body.object,
+        hasChanges,
+        hasMessaging,
+      });
       webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+    } else {
+      logger.info('ℹ️ Webhook has no changes or messaging to process — skipping queue');
     }
+  } else {
+    logger.info(`ℹ️ Ignoring webhook with object type: ${body.object} (expected 'instagram' or 'page')`);
   }
 });
 

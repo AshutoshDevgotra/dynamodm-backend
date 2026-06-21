@@ -22,26 +22,47 @@ interface DMJobData {
 export async function sendInstagramDM(data: DMJobData): Promise<void> {
   const { dmLogId, creatorId, igBusinessId, recipientId, message, ctaLink, automationRuleId } = data;
 
+  logger.info(`📤 sendInstagramDM called`, {
+    dmLogId, creatorId, igBusinessId, recipientId, automationRuleId,
+    messagePreview: message.slice(0, 100),
+  });
+
   // Get creator access token
   const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('+accessToken');
   if (!account?.accessToken) {
+    logger.error(`❌ Creator ${creatorId} has no connected account or token is missing`);
     throw new Error('Creator Instagram account not connected or token missing.');
   }
 
   const accessToken = decryptToken(account.accessToken);
+  logger.info(`🔑 Token decrypted for creator ${creatorId} (token length: ${accessToken.length})`);
 
   // Build message text
   let messageText = message;
   if (ctaLink) messageText += `\n\n${ctaLink}`;
 
+  const apiUrl = `${META_API}/${igBusinessId}/messages`;
+  const payload = {
+    recipient: { id: recipientId },
+    message: { text: messageText },
+  };
+
+  logger.info(`📡 Sending DM via Meta API`, {
+    url: apiUrl,
+    recipientId,
+    messageLength: messageText.length,
+  });
+
   try {
     // Send DM via Instagram Messaging API
-    await axios.post(`${META_API}/${igBusinessId}/messages`, {
-      recipient: { id: recipientId },
-      message: { text: messageText },
-    }, {
+    const response = await axios.post(apiUrl, payload, {
       params: { access_token: accessToken },
       headers: { 'Content-Type': 'application/json' },
+    });
+
+    logger.info(`✅ Meta API DM response`, {
+      status: response.status,
+      data: JSON.stringify(response.data).slice(0, 300),
     });
 
     // Update DM log
@@ -58,13 +79,26 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
       timestamp: new Date(),
     });
 
-    logger.info(`✅ DM sent to ${recipientId}`);
+    logger.info(`✅ DM successfully sent to ${recipientId}`);
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    const axiosErr = err as any;
+    const errorMessage = axiosErr?.response?.data?.error?.message || axiosErr?.message || 'Unknown error';
+    const errorCode = axiosErr?.response?.data?.error?.code;
+    const errorSubcode = axiosErr?.response?.data?.error?.error_subcode;
+    const httpStatus = axiosErr?.response?.status;
+
+    logger.error(`❌ DM send failed`, {
+      recipientId,
+      httpStatus,
+      errorCode,
+      errorSubcode,
+      errorMessage,
+      responseData: JSON.stringify(axiosErr?.response?.data).slice(0, 500),
+    });
 
     await DMLog.findByIdAndUpdate(dmLogId, {
       status: 'failed',
-      errorMessage,
+      errorMessage: `[${httpStatus}] ${errorMessage} (code: ${errorCode}, subcode: ${errorSubcode})`,
       $inc: { retryCount: 1 },
     });
 
@@ -73,10 +107,11 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
     await AnalyticsEvent.create({
       creatorId, eventType: 'dm_failed',
       automationRuleId,
-      metadata: { recipientId, error: errorMessage },
+      metadata: { recipientId, error: errorMessage, errorCode, errorSubcode },
       timestamp: new Date(),
     });
 
     throw err; // re-throw so BullMQ retries the job
   }
 }
+

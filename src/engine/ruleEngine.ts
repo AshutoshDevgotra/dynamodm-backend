@@ -67,9 +67,16 @@ function matchesKeyword(text: string, keywords: string[], matchType: string): bo
 
 export async function processWebhookEvent(payload: WebhookPayload): Promise<void> {
   const isInstagram = payload.object === 'instagram';
+  logger.info(`🔄 Processing webhook event — object: ${payload.object}, entries: ${payload.entry.length}`);
 
   for (const entry of payload.entry) {
     const entryId = entry.id;
+    logger.info(`📋 Processing entry ${entryId}`, {
+      hasChanges: !!(entry.changes && entry.changes.length > 0),
+      changeCount: entry.changes?.length || 0,
+      hasMessaging: !!(entry.messaging && entry.messaging.length > 0),
+      messagingCount: entry.messaging?.length || 0,
+    });
 
     // Find which creator owns this account
     const query = isInstagram 
@@ -78,27 +85,44 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
 
     const creatorAccount = await CreatorAccount.findOne(query);
     if (!creatorAccount) {
-      logger.debug(`No creator found for entry ${entryId} (object: ${payload.object})`);
+      logger.warn(`⚠️ No creator found for entry ${entryId} (object: ${payload.object}) — query: ${JSON.stringify(query)}`);
       continue;
     }
 
     const creatorId = creatorAccount.userId.toString();
+    logger.info(`✅ Found creator ${creatorId} (IG: ${creatorAccount.instagramBusinessId}) for entry ${entryId}`);
 
     // Process comment changes
     if (entry.changes) {
       for (const change of entry.changes) {
+        logger.info(`📝 Processing change field: '${change.field}'`, {
+          hasFrom: !!change.value?.from,
+          hasText: !!change.value?.text,
+          verb: change.value?.verb,
+          item: change.value?.item,
+          mediaId: change.value?.media?.id || (change.value as any)?.media_id,
+          fullValue: JSON.stringify(change.value).slice(0, 500),
+        });
+
         if (change.field === 'comments' || change.field === 'feed') {
           const commentData = change.value;
           // Instagram comments don't have a 'verb' field, Facebook feeds use 'verb === add'
           if ((!commentData.verb || commentData.verb === 'add') && commentData.from && commentData.text) {
+            // Robust media ID extraction — handles both media.id (object) and media_id (flat string)
+            const mediaId = commentData.media?.id || (commentData as any).media_id;
             const comment: CommentEvent = {
               from: commentData.from,
               text: commentData.text,
               id: commentData.id || '',
-              media: commentData.media,
+              media: mediaId ? { id: mediaId } : undefined,
             };
+            logger.info(`💬 Comment detected: "${comment.text}" from ${comment.from.username || comment.from.id} on media ${mediaId || 'unknown'}`);
             await handleComment(creatorId, creatorAccount.instagramBusinessId!, comment);
+          } else {
+            logger.info(`⏭️ Skipping change: verb=${commentData.verb}, hasFrom=${!!commentData.from}, hasText=${!!commentData.text}`);
           }
+        } else {
+          logger.info(`⏭️ Ignoring change field '${change.field}' (expected 'comments' or 'feed')`);
         }
       }
     }
@@ -106,8 +130,12 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     // Process messaging changes (DMs)
     if (entry.messaging) {
       for (const msg of entry.messaging) {
-        if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
+        if (!msg.message || msg.message.is_echo || !msg.message.text) {
+          logger.debug(`⏭️ Skipping messaging event: no message, is_echo, or no text`);
+          continue;
+        }
         
+        logger.info(`📨 DM received from ${msg.sender.id}: "${msg.message.text}"`);
         await handleDM(creatorId, creatorAccount.instagramBusinessId!, msg);
       }
     }
@@ -115,6 +143,13 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
 }
 
 async function handleComment(creatorId: string, igBusinessId: string, comment: CommentEvent): Promise<void> {
+  logger.info(`🔍 handleComment called for creator ${creatorId}`, {
+    commentId: comment.id,
+    from: comment.from,
+    text: comment.text,
+    mediaId: comment.media?.id,
+  });
+
   // Track comment received
   await AnalyticsEvent.create({
     creatorId,
@@ -124,15 +159,41 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
   });
 
   const rules = await AutomationRule.find({ creatorId, isActive: true, triggerType: 'comment' });
+  logger.info(`📋 Found ${rules.length} active comment automation rules for creator ${creatorId}`);
+
+  if (rules.length === 0) {
+    logger.warn(`⚠️ No active comment automations for creator ${creatorId} — comment will not trigger any DM`);
+    return;
+  }
 
   for (const rule of rules) {
-    // Filter by target post if specified (Optimization: Check this BEFORE running keyword matching)
+    logger.info(`🔄 Checking rule: "${rule.name}" (ID: ${rule._id})`, {
+      keywords: rule.keywords,
+      matchType: rule.matchType,
+      targetPosts: rule.targetPosts,
+      targetPostCount: rule.targetPosts?.length || 0,
+    });
+
+    // Filter by target post if specified
     if (rule.targetPosts && rule.targetPosts.length > 0) {
-      if (!comment.media || !rule.targetPosts.includes(comment.media.id)) continue;
+      if (!comment.media) {
+        logger.info(`⏭️ Rule "${rule.name}" skipped: rule targets specific posts but comment has no media ID`);
+        continue;
+      }
+      if (!rule.targetPosts.includes(comment.media.id)) {
+        logger.info(`⏭️ Rule "${rule.name}" skipped: media ${comment.media.id} not in targetPosts [${rule.targetPosts.join(', ')}]`);
+        continue;
+      }
+      logger.info(`✅ Post match: media ${comment.media.id} found in targetPosts`);
     }
 
     // Now check if the comment matches the keywords
-    if (!matchesKeyword(comment.text, rule.keywords, rule.matchType)) continue;
+    const keywordMatched = matchesKeyword(comment.text, rule.keywords, rule.matchType);
+    if (!keywordMatched) {
+      logger.info(`⏭️ Rule "${rule.name}" skipped: keyword mismatch. Comment "${comment.text}" did not match [${rule.keywords.join(', ')}] (mode: ${rule.matchType})`);
+      continue;
+    }
+    logger.info(`✅ Keyword match! "${comment.text}" matched rule "${rule.name}"`);
 
     const redis = getRedis();
     const cooldownKey = `cooldown:${creatorId}:${rule._id}:${comment.from.id}`;
@@ -141,7 +202,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
     // Duplicate check — same comment already processed
     const isDuplicate = await redis.get(duplicateKey);
     if (isDuplicate) {
-      logger.debug(`Duplicate comment ${comment.id} skipped`);
+      logger.info(`⏭️ Duplicate comment ${comment.id} skipped (already processed)`);
       continue;
     }
     await redis.setex(duplicateKey, 3600, '1'); // 1 hour TTL
@@ -149,6 +210,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
     // Cooldown check — same user within cooldown period
     const inCooldown = await redis.get(cooldownKey);
     if (inCooldown) {
+      logger.info(`⏭️ Cooldown active for user ${comment.from.id} on rule "${rule.name}" — skipping DM`);
       await DMLog.create({
         creatorId, automationRuleId: rule._id, instagramUserId: comment.from.id,
         instagramUsername: comment.from.username, messageText: rule.responseMessage,
@@ -204,7 +266,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
       timestamp: new Date(),
     });
 
-    logger.info(`✅ DM job queued for ${comment.from.username} (rule: ${rule.name})`);
+    logger.info(`✅ DM job ${job.id} queued for ${comment.from.username || comment.from.id} (rule: "${rule.name}", delay: ${rule.delaySeconds || 0}s)`);
   }
 }
 
@@ -212,6 +274,10 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
   const fromId = msg.sender.id;
   const messageText = msg.message.text!;
   const messageId = msg.message.mid;
+
+  logger.info(`🔍 handleDM called for creator ${creatorId}`, {
+    fromId, messageText, messageId,
+  });
 
   // Track DM received
   await AnalyticsEvent.create({
@@ -222,9 +288,14 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
   });
 
   const rules = await AutomationRule.find({ creatorId, isActive: true, triggerType: 'dm' });
+  logger.info(`📋 Found ${rules.length} active DM automation rules for creator ${creatorId}`);
 
   for (const rule of rules) {
-    if (!matchesKeyword(messageText, rule.keywords, rule.matchType)) continue;
+    const keywordMatched = matchesKeyword(messageText, rule.keywords, rule.matchType);
+    logger.info(`🔄 Checking DM rule "${rule.name}": keyword match=${keywordMatched}`, {
+      keywords: rule.keywords, matchType: rule.matchType,
+    });
+    if (!keywordMatched) continue;
 
     const redis = getRedis();
     const cooldownKey = `cooldown:${creatorId}:${rule._id}:${fromId}`;
@@ -232,13 +303,14 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
 
     const isDuplicate = await redis.get(duplicateKey);
     if (isDuplicate) {
-      logger.debug(`Duplicate DM ${messageId} skipped`);
+      logger.info(`⏭️ Duplicate DM ${messageId} skipped`);
       continue;
     }
     await redis.setex(duplicateKey, 3600, '1');
 
     const inCooldown = await redis.get(cooldownKey);
     if (inCooldown) {
+      logger.info(`⏭️ Cooldown active for DM user ${fromId} on rule "${rule.name}"`);
       await DMLog.create({
         creatorId, automationRuleId: rule._id, instagramUserId: fromId,
         instagramUsername: 'Unknown', messageText: rule.responseMessage,
@@ -288,6 +360,6 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
       timestamp: new Date(),
     });
 
-    logger.info(`✅ DM job queued for ${fromId} (rule: ${rule.name})`);
+    logger.info(`✅ DM job ${job.id} queued for ${fromId} (rule: "${rule.name}")`);
   }
 }
