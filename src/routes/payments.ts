@@ -47,7 +47,7 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
     order = await (razorpay.orders.create as Function)({
       amount: planConfig.amount,
       currency: 'INR',
-      receipt: `receipt_${req.user!.id}_${Date.now()}`,
+      receipt: `rcpt_${req.user!.id.slice(-8)}_${Date.now().toString().slice(-8)}`,
       notes: { userId: req.user!.id, plan },
     });
   } catch (razorErr: any) {
