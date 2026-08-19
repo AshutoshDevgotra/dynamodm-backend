@@ -130,6 +130,11 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
       { upsert: true, new: true }
     );
 
+    if (!dmQueue) {
+      logger.warn('DM automation skipped because REDIS_URL is not configured');
+      continue;
+    }
+
     const dmLog = await DMLog.create({
       creatorId, leadId: lead._id, automationRuleId: rule._id,
       instagramUserId: comment.from.id, instagramUsername: comment.from.username,
@@ -199,6 +204,11 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
       },
       { upsert: true, new: true }
     );
+
+    if (!dmQueue) {
+      logger.warn('DM automation skipped because REDIS_URL is not configured');
+      continue;
+    }
 
     const dmLog = await DMLog.create({
       creatorId, leadId: lead._id, automationRuleId: rule._id,

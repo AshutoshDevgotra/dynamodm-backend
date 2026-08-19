@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq';
 import { redisConnection } from '../config/redis';
 
-export const dmQueue = new Queue('dm-queue', {
+export const dmQueue = process.env.REDIS_URL?.trim() ? new Queue('dm-queue', {
   connection: redisConnection,
   defaultJobOptions: {
     attempts: 3,
@@ -9,9 +9,9 @@ export const dmQueue = new Queue('dm-queue', {
     removeOnComplete: { count: 1000 },
     removeOnFail: { count: 500 },
   },
-});
+}) : null;
 
-export const webhookQueue = new Queue('webhook-queue', {
+export const webhookQueue = process.env.REDIS_URL?.trim() ? new Queue('webhook-queue', {
   connection: redisConnection,
   defaultJobOptions: {
     attempts: 3,
@@ -19,4 +19,5 @@ export const webhookQueue = new Queue('webhook-queue', {
     removeOnComplete: { count: 500 },
     removeOnFail: { count: 200 },
   },
-});
+}) : null;
+

@@ -554,7 +554,12 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
           hasChanges,
           hasMessaging,
         });
-        webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+        if (!webhookQueue) {
+      logger.warn('Webhook queue skipped because REDIS_URL is not configured');
+      res.status(202).json({ success: true, message: 'Webhook received; queue processing is disabled.' });
+      return;
+    }
+    await webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
       }
     } else {
       logger.info('ℹ️ Webhook has no changes or messaging to process — skipping queue');

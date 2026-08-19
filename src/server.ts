@@ -5,6 +5,11 @@ import app from './app';
 import { connectDB } from './config/database';
 import { logger } from './utils/logger';
 
+if (process.env.REDIS_URL?.trim()) {
+  require('./workers/dmWorker');
+  require('./workers/webhookWorker');
+}
+
 const PORT = process.env.PORT || 3001;
 
 async function bootstrap() {
