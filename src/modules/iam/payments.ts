@@ -9,10 +9,16 @@ import { logger } from '../../utils/logger';
 
 const router = Router();
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID as string,
-  key_secret: process.env.RAZORPAY_KEY_SECRET as string,
-});
+const getRazorpayInstance = (): Razorpay => {
+  const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+  const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+
+  if (!keyId || !keySecret) {
+    throw new AppError('Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.', 503);
+  }
+
+  return new Razorpay({ key_id: keyId, key_secret: keySecret });
+};
 
 // Plan definitions — amounts in paise (INR × 100)
 const PLANS: Record<string, { amount: number; name: string; durationDays: number }> = {
@@ -44,7 +50,7 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
 
   let order: any;
   try {
-    order = await (razorpay.orders.create as Function)({
+    order = await (getRazorpayInstance().orders.create as Function)({
       amount: planConfig.amount,
       currency: 'INR',
       receipt: `rcpt_${req.user!.id.slice(-8)}_${Date.now().toString().slice(-8)}`,
