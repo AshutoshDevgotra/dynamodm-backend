@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { User } from '../models/User';
-import { Subscription } from '../models/Subscription';
-import { generateToken, authenticate, AuthRequest } from '../middleware/auth';
-import { authLimiter } from '../middleware/rateLimiter';
-import { AppError } from '../middleware/errorHandler';
+import { User } from '../../models/User';
+import { Subscription } from '../../models/Subscription';
+import { generateToken, authenticate, AuthRequest } from '../../middleware/auth';
+import { authLimiter } from '../../middleware/rateLimiter';
+import { AppError } from '../../middleware/errorHandler';
 import nodemailer from 'nodemailer';
 
 const router = Router();
@@ -18,7 +18,7 @@ const transporter = nodemailer.createTransport({
 
 // POST /api/auth/register
 router.post('/register', authLimiter, async (req: Request, res: Response): Promise<void> => {
-  const { name, email, password } = req.body;
+  const { name, email, password, role = 'creator' } = req.body;
 
   if (!name || !email || !password) {
     throw new AppError('Name, email, and password are required.', 400);
@@ -27,8 +27,23 @@ router.post('/register', authLimiter, async (req: Request, res: Response): Promi
   const existing = await User.findOne({ email });
   if (existing) throw new AppError('Email already registered.', 409);
 
-  const user = await User.create({ name, email, password, isVerified: true });
+  const user = await User.create({ name, email, password, role, isVerified: true });
   await Subscription.create({ userId: user._id, plan: 'free' });
+
+  // Brand Onboarding Logic
+  if (role === 'brand') {
+    const publicDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'aol.com'];
+    const domain = email.split('@')[1]?.toLowerCase();
+    const isCorporate = !publicDomains.includes(domain);
+
+    // Need to dynamically import Brand model to avoid circular dependency issues if any, or just import it at top.
+    const { Brand } = require('../../models/Brand');
+    await Brand.create({
+      userId: user._id,
+      companyName: name, // Using name as default company name
+      verificationStatus: isCorporate ? 'VERIFIED' : 'PENDING'
+    });
+  }
 
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   res.status(201).json({

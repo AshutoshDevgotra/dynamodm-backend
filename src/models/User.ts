@@ -7,10 +7,11 @@ export interface IUser extends Document {
   password?: string;
   name: string;
   avatar?: string;
-  role: 'creator' | 'admin';
+  role: 'CREATOR' | 'BRAND' | 'ADMIN';
   googleId?: string;
   isVerified: boolean;
   isActive: boolean;
+  status: 'ACTIVE' | 'BANNED' | 'PENDING';
   resetPasswordToken?: string;
   resetPasswordExpiry?: Date;
   createdAt: Date;
@@ -24,7 +25,8 @@ const UserSchema = new Schema<IUser>(
     password: { type: String, select: false },
     name: { type: String, required: true, trim: true },
     avatar: { type: String },
-    role: { type: String, enum: ['creator', 'admin'], default: 'creator' },
+    role: { type: String, enum: ['CREATOR', 'BRAND', 'ADMIN'], default: 'CREATOR' },
+    status: { type: String, enum: ['ACTIVE', 'BANNED', 'PENDING'], default: 'ACTIVE' },
     googleId: { type: String, unique: true, sparse: true },
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },

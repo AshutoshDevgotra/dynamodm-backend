@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
-import { Lead } from '../models/Lead';
+import { authenticate, AuthRequest } from '../../middleware/auth';
+import { Lead } from '../../models/Lead';
 
 const router = Router();
 router.use(authenticate);

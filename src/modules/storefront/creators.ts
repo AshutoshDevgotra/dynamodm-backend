@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { CreatorAccount } from '../models/CreatorAccount';
-import { AutomationRule } from '../models/AutomationRule';
-import { AppError } from '../middleware/errorHandler';
+import { CreatorAccount } from '../../models/CreatorAccount';
+import { Product } from '../../models/Product';
+import { AppError } from '../../middleware/errorHandler';
 
 const router = Router();
 
@@ -15,25 +15,19 @@ router.get('/:username', async (req: Request, res: Response): Promise<void> => {
   const account = await CreatorAccount.findOne({ username: req.params.username, isConnected: true });
   if (!account) throw new AppError('Creator profile not found.', 404);
 
-  const automations = await AutomationRule.find({ 
-    creatorId: account.userId, 
-    isActive: true, 
-    ctaLink: { $ne: null } 
-  });
+  const products = await Product.find({ creatorId: account._id });
 
-  const links = automations
-    .filter(a => a.ctaLink && a.ctaLink.trim() !== '')
-    .map(a => ({
-      label: a.name,
-      url: a.ctaLink,
-      cta: true
-    }));
+  const links = products.map((p: any) => ({
+    label: p.title,
+    url: p.originalUrl || p.dynamoShortUrl,
+    cta: true
+  }));
 
   const profile = {
     name: account.name || account.username,
     username: account.username,
     instagramUsername: account.username,
-    bio: 'Creator automating DMs and sharing resources! 🚀',
+    bio: account.profile?.bio || 'Creator automating DMs and sharing resources! 🚀',
     followersCount: account.followersCount || 0,
     links
   };

@@ -1,9 +1,9 @@
 import axios from 'axios';
 import { DMLog } from '../models/DMLog';
-import { AutomationRule } from '../models/AutomationRule';
+import { Automation } from '../models/AutomationRule';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { CreatorAccount } from '../models/CreatorAccount';
-import { decryptToken } from '../routes/meta';
+import { decryptToken } from '../modules/automations/meta';
 import { logger } from '../utils/logger';
 
 const META_API = `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}`;
@@ -69,7 +69,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
     await DMLog.findByIdAndUpdate(dmLogId, { status: 'sent', sentAt: new Date() });
 
     // Update automation stats
-    await AutomationRule.findByIdAndUpdate(automationRuleId, { $inc: { 'stats.dmsSent': 1 } });
+    await Automation.findByIdAndUpdate(automationRuleId, { $inc: { 'stats.dmSentCount': 1 } });
 
     // Track analytics
     await AnalyticsEvent.create({
@@ -101,8 +101,6 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
       errorMessage: `[${httpStatus}] ${errorMessage} (code: ${errorCode}, subcode: ${errorSubcode})`,
       $inc: { retryCount: 1 },
     });
-
-    await AutomationRule.findByIdAndUpdate(automationRuleId, { $inc: { 'stats.failed': 1 } });
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'dm_failed',

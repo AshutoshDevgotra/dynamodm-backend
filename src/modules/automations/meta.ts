@@ -1,13 +1,22 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
-import { authenticate, AuthRequest } from '../middleware/auth';
-import { CreatorAccount } from '../models/CreatorAccount';
-import { AppError } from '../middleware/errorHandler';
-import { webhookQueue } from '../workers/queues';
-import { getRedis } from '../config/redis';
-import { logger } from '../utils/logger';
-import { processWebhookEvent } from '../engine/ruleEngine';
+import { authenticate, AuthRequest } from '../../middleware/auth';
+import { CreatorAccount } from '../../models/CreatorAccount';
+import { AppError } from '../../middleware/errorHandler';
+import { webhookQueue } from '../../workers/queues';
+import { getRedis } from '../../config/redis';
+import { logger } from '../../utils/logger';
+import { processWebhookEvent } from '../../engine/ruleEngine';
+import {
+  PAGE_PUBLIC_ABOUT_FIELDS,
+  aggregatePageAbout,
+  fetchPagesAbout,
+  graphErrorMessage,
+  normalizePageAbout,
+  searchPublicPages,
+  type PublicPageAbout,
+} from './pagePublicMetadata';
 
 const router = Router();
 const META_API = `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}`;
@@ -70,11 +79,14 @@ const REQUIRED_SCOPES = [
   'instagram_basic',
   'instagram_manage_comments',              // CRITICAL: enables comment webhook delivery
   'instagram_manage_messages',              // Required for sending DMs
+  'instagram_manage_insights',              // Required for demographic data
   'pages_show_list',
   'pages_manage_metadata',
   'pages_read_engagement',                  // Required for reading comment data
   'business_management',
 ];
+// Page Public Metadata Access is an App Review *feature* (not an OAuth scope).
+// After approval it allows /pages/search + public About fields on Pages the user does not manage.
 
 // ─── GET /api/meta/connect ────────────────────────────────────────────────────
 router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => {
@@ -166,8 +178,60 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     .filter(p => p.status === 'granted')
     .map(p => p.permission);
 
+  // Fetch Audience Insights if permission was granted
+  let audienceDemographics = undefined;
+  if (grantedScopes.includes('instagram_manage_insights')) {
+    try {
+      const insightsRes = await axios.get(`${META_API}/${igBusinessId}/insights`, {
+        params: {
+          access_token: longLivedToken,
+          metric: 'audience_gender_age,audience_city,audience_country',
+          period: 'lifetime'
+        }
+      });
+      
+      const insightsData = insightsRes.data.data;
+      const getMetric = (name: string) => insightsData.find((m: any) => m.name === name)?.values[0]?.value || {};
+      
+      const genderAgeMap = getMetric('audience_gender_age');
+      const genderMap: Record<string, number> = { Female: 0, Male: 0, Unknown: 0 };
+      const ageMap: Record<string, number> = {};
+      let totalAudience = 0;
+
+      Object.entries(genderAgeMap).forEach(([key, val]: [string, any]) => {
+        const count = parseInt(val, 10);
+        totalAudience += count;
+        const [genderCode, ageRange] = key.split('.');
+        if (genderCode === 'F') genderMap.Female += count;
+        else if (genderCode === 'M') genderMap.Male += count;
+        else genderMap.Unknown += count;
+        ageMap[ageRange] = (ageMap[ageRange] || 0) + count;
+      });
+
+      const toPercentageList = (map: Record<string, number>, keyName: string) => 
+        Object.entries(map)
+          .map(([k, v]) => ({ [keyName]: k, percentage: totalAudience > 0 ? Math.round((v / totalAudience) * 100) : 0 }))
+          .sort((a, b) => b.percentage - a.percentage);
+
+      const topAgeRanges = toPercentageList(ageMap, 'age') as any[];
+      const topGenders = toPercentageList(genderMap, 'gender') as any[];
+      
+      const cityMap = getMetric('audience_city');
+      const topCities = toPercentageList(cityMap, 'city').slice(0, 5) as any[];
+
+      const countryMap = getMetric('audience_country');
+      const topCountries = toPercentageList(countryMap, 'country').slice(0, 5) as any[];
+
+      audienceDemographics = { topAgeRanges, topGenders, topCities, topCountries };
+      logger.info(`✅ Fetched audience demographics for IG ${igBusinessId}`);
+    } catch (err: any) {
+      logger.error('❌ Failed to fetch Instagram insights', err?.response?.data || err.message);
+    }
+  }
+
   const encryptedToken = encryptToken(pageWithIG.access_token);
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
+  const facebookPages = pages.map((p) => ({ id: p.id, name: p.name }));
 
   // Subscribe the App to the Facebook Page to receive live webhooks for the linked Instagram account
   try {
@@ -179,26 +243,34 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     });
     logger.info(`✅ Successfully subscribed App to Facebook Page ${pageWithIG.id} for webhooks`);
   } catch (err: any) {
-    logger.error('❌ Failed to subscribe App to Facebook Page for webhooks', err?.response?.data || err);
+    logger.error('❌ Failed to subscribe App to Facebook Page for webhooks', err?.response?.data || err.message);
   }
 
   logger.info(`✅ OAuth complete for page ${pageWithIG.id} / IG ${igBusinessId}`);
 
+  const updatePayload: any = {
+    userId: userId,
+    instagramBusinessId: igBusinessId,
+    pageId: pageWithIG.id,
+    facebookPages,
+    accessToken: encryptedToken,
+    userAccessToken: encryptToken(longLivedToken),
+    tokenExpiry,
+    username: igProfile.username,
+    name: igProfile.name,
+    profilePic: igProfile.profile_picture_url,
+    followersCount: igProfile.followers_count,
+    isConnected: true,
+    scopes: grantedScopes,
+  };
+
+  if (audienceDemographics) {
+    updatePayload['profile.audienceDemographics'] = audienceDemographics;
+  }
+
   await CreatorAccount.findOneAndUpdate(
     { userId: userId },
-    {
-      userId: userId,
-      instagramBusinessId: igBusinessId,
-      pageId: pageWithIG.id,
-      accessToken: encryptedToken,
-      tokenExpiry,
-      username: igProfile.username,
-      name: igProfile.name,
-      profilePic: igProfile.profile_picture_url,
-      followersCount: igProfile.followers_count,
-      isConnected: true,
-      scopes: grantedScopes,
-    },
+    { $set: updatePayload },
     { upsert: true, new: true }
   );
 
@@ -219,8 +291,106 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
 // ─── GET /api/meta/status ─────────────────────────────────────────────────────
 router.get('/status', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-accessToken');
+  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-accessToken -userAccessToken');
   res.json({ success: true, data: { account } });
+});
+
+async function getUserGraphToken(userId: string): Promise<string | null> {
+  const account = await CreatorAccount.findOne({ userId }).select('+userAccessToken +accessToken');
+  if (account?.userAccessToken) return decryptToken(account.userAccessToken);
+  if (account?.accessToken) return decryptToken(account.accessToken);
+  return null;
+}
+
+function appGraphToken(): string {
+  return `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`;
+}
+
+function pageMetadataPayload(pages: PublicPageAbout[], extra: Record<string, unknown> = {}) {
+  return {
+    useCase: 'Page Public Metadata Access',
+    description:
+      'Aggregated public About information (name, location, hours, verification status, cover/profile) from multiple Facebook Pages. Every field is labeled with its source Page.',
+    pages,
+    aggregates: aggregatePageAbout(pages),
+    ...extra,
+  };
+}
+
+// ─── GET /api/meta/pages — managed Pages with labeled About fields ───────────
+router.get('/pages', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+userAccessToken');
+  if (!account || !account.userAccessToken) {
+    res.json({ success: true, data: pageMetadataPayload([], { connected: false }) });
+    return;
+  }
+
+  const token = decryptToken(account.userAccessToken);
+  try {
+    const pagesRes = await axios.get(`${META_API}/me/accounts`, {
+      params: {
+        fields: PAGE_PUBLIC_ABOUT_FIELDS,
+        access_token: token,
+      },
+    });
+    const pages = ((pagesRes.data?.data as any[]) || [])
+      .map(normalizePageAbout)
+      .filter((p): p is PublicPageAbout => Boolean(p));
+    res.json({ success: true, data: pageMetadataPayload(pages, { connected: true, origin: 'managed_pages' }) });
+  } catch (err: any) {
+    logger.error('Failed to fetch Facebook pages', err?.response?.data || err);
+    throw new AppError(graphErrorMessage(err) || 'Failed to fetch Facebook pages.', 500);
+  }
+});
+
+// ─── GET /api/meta/public-page-metadata ───────────────────────────────────────
+// Page Public Metadata Access: search public Pages and aggregate About fields.
+// Query: q (search term, required), limit (optional, default 8)
+router.get('/public-page-metadata', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const query = String(req.query.q || '').trim();
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || '8'), 10) || 8, 2), 15);
+
+  if (query.length < 2) {
+    throw new AppError('Provide a search term (?q=) of at least 2 characters to aggregate public Page About data.', 400);
+  }
+
+  const userToken = await getUserGraphToken(req.user!.id);
+  if (!userToken) {
+    throw new AppError('Connect Facebook via Meta login before viewing public Page metadata.', 400);
+  }
+
+  const tokens = [userToken, appGraphToken()].filter((t, i, arr) => arr.indexOf(t) === i);
+  let lastError = '';
+
+  for (const accessToken of tokens) {
+    try {
+      const matches = await searchPublicPages(query, accessToken, limit);
+      if (matches.length === 0) {
+        res.json({
+          success: true,
+          data: pageMetadataPayload([], { query, origin: 'pages_search', connected: true }),
+        });
+        return;
+      }
+
+      const pages = await fetchPagesAbout(matches.map((p) => p.id), accessToken);
+      res.json({
+        success: true,
+        data: pageMetadataPayload(pages, {
+          query,
+          origin: 'pages_search',
+          connected: true,
+          resultCount: pages.length,
+        }),
+      });
+      return;
+    } catch (err: any) {
+      lastError = graphErrorMessage(err);
+      logger.warn('Public Page metadata fetch failed for a token', err?.response?.data || err);
+    }
+  }
+
+  throw new AppError(lastError || 'Failed to fetch public Page metadata from Meta.', 500);
 });
 
 // ─── DELETE /api/meta/disconnect ─────────────────────────────────────────────

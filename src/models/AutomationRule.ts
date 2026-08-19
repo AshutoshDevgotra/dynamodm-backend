@@ -1,59 +1,62 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export type MatchType = 'exact' | 'contains' | 'starts_with' | 'regex';
-export type TriggerType = 'comment' | 'mention' | 'story_mention' | 'dm';
+export type FlowStepType = 'CHECK_FOLLOW' | 'SEND_DM' | 'DELAY' | 'CONDITION';
 
-export interface IAutomationRule extends Document {
+export interface IFlowStep {
+  step: number;
+  type: FlowStepType;
+  content?: string;
+  attachment?: string;
+  fallbackAction?: string;
+  delaySeconds?: number;
+}
+
+export interface IAutomation extends Document {
   creatorId: mongoose.Types.ObjectId;
   name: string;
-  keywords: string[];
-  matchType: MatchType;
-  triggerType: TriggerType;
-  targetPosts?: string[];
-  responseMessage: string;
-  ctaLink?: string;
-  attachmentUrl?: string;
-  attachmentType?: 'pdf' | 'image' | 'video';
+  trigger: {
+    type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'DM';
+    keywords: string[];
+    postId?: string;
+  };
+  flow: IFlowStep[];
   isActive: boolean;
-  delaySeconds: number; // delay before sending DM
-  cooldownMinutes: number; // prevent repeat DMs to same user within X mins
-  sendPublicReply: boolean;
-  publicReplyMessage?: string;
   stats: {
-    triggered: number;
-    dmsSent: number;
-    failed: number;
+    triggeredCount: number;
+    dmSentCount: number;
+    conversionCount: number;
   };
   createdAt: Date;
   updatedAt: Date;
 }
 
-const AutomationRuleSchema = new Schema<IAutomationRule>(
+const AutomationSchema = new Schema<IAutomation>(
   {
-    creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    name: { type: String, required: true, trim: true },
-    keywords: { type: [String], required: true },
-    matchType: { type: String, enum: ['exact', 'contains', 'starts_with', 'regex'], default: 'contains' },
-    triggerType: { type: String, enum: ['comment', 'mention', 'story_mention', 'dm'], default: 'comment' },
-    targetPosts: { type: [String], default: [] },
-    responseMessage: { type: String, required: true, maxlength: 1000 },
-    ctaLink: { type: String },
-    attachmentUrl: { type: String },
-    attachmentType: { type: String, enum: ['pdf', 'image', 'video'] },
-    isActive: { type: Boolean, default: true },
-    delaySeconds: { type: Number, default: 0 },
-    cooldownMinutes: { type: Number, default: 60 },
-    sendPublicReply: { type: Boolean, default: false },
-    publicReplyMessage: { type: String, maxlength: 500 },
-    stats: {
-      triggered: { type: Number, default: 0 },
-      dmsSent: { type: Number, default: 0 },
-      failed: { type: Number, default: 0 },
+    creatorId: { type: Schema.Types.ObjectId, ref: 'CreatorAccount', required: true, index: true },
+    name: { type: String, required: true },
+    trigger: {
+      type: { type: String, enum: ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'DM'], required: true },
+      keywords: { type: [String], default: [] },
+      postId: { type: String }
     },
+    flow: [{
+      step: { type: Number, required: true },
+      type: { type: String, enum: ['CHECK_FOLLOW', 'SEND_DM', 'DELAY', 'CONDITION'], required: true },
+      content: { type: String },
+      attachment: { type: String },
+      fallbackAction: { type: String },
+      delaySeconds: { type: Number }
+    }],
+    isActive: { type: Boolean, default: true },
+    stats: {
+      triggeredCount: { type: Number, default: 0 },
+      dmSentCount: { type: Number, default: 0 },
+      conversionCount: { type: Number, default: 0 }
+    }
   },
   { timestamps: true }
 );
 
-AutomationRuleSchema.index({ creatorId: 1, isActive: 1 });
+AutomationSchema.index({ creatorId: 1, isActive: 1 });
 
-export const AutomationRule = mongoose.model<IAutomationRule>('AutomationRule', AutomationRuleSchema);
+export const Automation = mongoose.model<IAutomation>('Automation', AutomationSchema);

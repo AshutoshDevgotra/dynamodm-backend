@@ -1,11 +1,11 @@
 import { Router, Response } from 'express';
-import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
-import { User } from '../models/User';
-import { Subscription } from '../models/Subscription';
-import { Payment } from '../models/Payment';
-import { AutomationRule } from '../models/AutomationRule';
-import { Lead } from '../models/Lead';
-import { DMLog } from '../models/DMLog';
+import { authenticate, requireRole, AuthRequest } from '../../middleware/auth';
+import { User } from '../../models/User';
+import { Subscription } from '../../models/Subscription';
+import { Payment } from '../../models/Payment';
+import { Automation } from '../../models/AutomationRule';
+import { Lead } from '../../models/Lead';
+import { DMLog } from '../../models/DMLog';
 
 const router = Router();
 router.use(authenticate, requireRole('admin'));

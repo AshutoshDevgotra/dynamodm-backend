@@ -1,9 +1,9 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
-import { AnalyticsEvent } from '../models/AnalyticsEvent';
-import { DMLog } from '../models/DMLog';
-import { Lead } from '../models/Lead';
-import { AutomationRule } from '../models/AutomationRule';
+import { authenticate, AuthRequest } from '../../middleware/auth';
+import { AnalyticsEvent } from '../../models/AnalyticsEvent';
+import { DMLog } from '../../models/DMLog';
+import { Lead } from '../../models/Lead';
+import { Automation } from '../../models/AutomationRule';
 
 const router = Router();
 router.use(authenticate);
@@ -19,18 +19,19 @@ router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> =>
     DMLog.countDocuments({ creatorId, status: 'failed', createdAt: { $gte: since } }),
     Lead.countDocuments({ creatorId }),
     Lead.countDocuments({ creatorId, createdAt: { $gte: since } }),
-    AutomationRule.countDocuments({ creatorId, isActive: true }),
+    Automation.countDocuments({ creatorId, isActive: true }),
   ]);
 
-  const commentsReceived = await AnalyticsEvent.countDocuments({
-    creatorId, eventType: 'comment_received', timestamp: { $gte: since },
-  });
+  const [commentsReceived, linkClicks] = await Promise.all([
+    AnalyticsEvent.countDocuments({ creatorId, eventType: 'comment_received', timestamp: { $gte: since } }),
+    AnalyticsEvent.countDocuments({ creatorId, eventType: 'link_click', timestamp: { $gte: since } })
+  ]);
 
   res.json({
     success: true,
     data: {
       dmsSent, dmsFailed, leadsTotal, leadsNew,
-      commentsReceived, automationsActive,
+      commentsReceived, automationsActive, linkClicks,
       successRate: dmsSent + dmsFailed > 0 ? Math.round((dmsSent / (dmsSent + dmsFailed)) * 100) : 0,
     },
   });
@@ -61,9 +62,9 @@ router.get('/timeseries', async (req: AuthRequest, res: Response): Promise<void>
 
 // GET /api/analytics/top-automations
 router.get('/top-automations', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automations = await AutomationRule.find({ creatorId: req.user!.id })
-    .select('name keyword stats')
-    .sort({ 'stats.dmsSent': -1 })
+  const automations = await Automation.find({ creatorId: req.user!.id })
+    .select('name trigger stats')
+    .sort({ 'stats.dmSentCount': -1 })
     .limit(10);
   res.json({ success: true, data: { automations } });
 });

@@ -8,14 +8,19 @@ import cookieParser from 'cookie-parser';
 import { globalLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
-import authRoutes from './routes/auth';
-import metaRoutes from './routes/meta';
-import automationRoutes from './routes/automations';
-import leadsRoutes from './routes/leads';
-import analyticsRoutes from './routes/analytics';
-import paymentsRoutes from './routes/payments';
-import adminRoutes from './routes/admin';
-import creatorsRoutes from './routes/creators';
+import authRoutes from './modules/iam/auth';
+import metaRoutes from './modules/automations/meta';
+import automationRoutes from './modules/automations/automations';
+import leadsRoutes from './modules/automations/leads';
+import analyticsRoutes from './modules/analytics/analytics';
+import paymentsRoutes from './modules/iam/payments';
+import adminRoutes from './modules/iam/admin';
+import creatorsRoutes from './modules/storefront/creators';
+import linksRoutes from './modules/storefront/links';
+import discoveryRoutes from './modules/campaigns/discovery';
+import aiMatchingRoutes from './modules/campaigns/aiMatching';
+import brandCampaignsRoutes from './modules/campaigns/brandCampaigns';
+import paymentRoutes from './modules/payments/razorpay';
 
 const app = express();
 
@@ -61,6 +66,11 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/creators', creatorsRoutes);
+app.use('/api/links', linksRoutes);
+app.use('/api/discovery', discoveryRoutes);
+app.use('/api/discovery', aiMatchingRoutes); // Merges routes
+app.use('/api/brand-campaigns', brandCampaignsRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // ─── Error Handling ────────────────────────────────────────────────────────────
 app.use(notFound);

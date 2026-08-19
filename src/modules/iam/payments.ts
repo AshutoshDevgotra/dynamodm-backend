@@ -1,11 +1,11 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
-import { authenticate, AuthRequest } from '../middleware/auth';
-import { Subscription } from '../models/Subscription';
-import { Payment } from '../models/Payment';
-import { AppError } from '../middleware/errorHandler';
-import { logger } from '../utils/logger';
+import { authenticate, AuthRequest } from '../../middleware/auth';
+import { Subscription } from '../../models/Subscription';
+import { Payment } from '../../models/Payment';
+import { AppError } from '../../middleware/errorHandler';
+import { logger } from '../../utils/logger';
 
 const router = Router();
 
