@@ -12,8 +12,13 @@ const PORT = process.env.PORT || 3001;
 
 async function bootstrap() {
   try {
+    if (!process.env.JWT_SECRET?.trim()) throw new Error('JWT_SECRET is required to start the backend.');
     await connectDB();
-    await connectRedis();
+    try {
+      await connectRedis();
+    } catch (redisError) {
+      logger.warn('Redis unavailable; auth and HTTP routes will continue, queue features are disabled.', redisError);
+    }
 
     app.listen(PORT, () => {
       logger.info(`🚀 DynamoDM API server running on port ${PORT}`);
