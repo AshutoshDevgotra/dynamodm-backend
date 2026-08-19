@@ -3,18 +3,19 @@ dotenv.config();
 
 import app from './app';
 import { connectDB } from './config/database';
-import { connectRedis } from './config/redis';
 import { logger } from './utils/logger';
-import './workers/dmWorker';
-import './workers/webhookWorker';
+
+if (process.env.REDIS_URL?.trim()) {
+  require('./workers/dmWorker');
+  require('./workers/webhookWorker');
+}
 
 const PORT = process.env.PORT || 3001;
 
 async function bootstrap() {
   try {
+    if (!process.env.JWT_SECRET?.trim()) throw new Error('JWT_SECRET is required to start the backend.');
     await connectDB();
-    await connectRedis();
-
     app.listen(PORT, () => {
       logger.info(`🚀 DynamoDM API server running on port ${PORT}`);
       logger.info(`📌 Environment: ${process.env.NODE_ENV}`);

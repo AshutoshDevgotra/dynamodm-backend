@@ -1,8 +1,8 @@
 import IORedis from 'ioredis';
 import { logger } from '../utils/logger';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const redisUrl = new URL(REDIS_URL);
+const REDIS_URL = process.env.REDIS_URL?.trim();
+const redisUrl = REDIS_URL ? new URL(REDIS_URL) : new URL('redis://localhost:6379');
 
 // Connection options object for BullMQ (avoids ioredis version conflict)
 export const redisConnection = {
@@ -17,9 +17,10 @@ export const redisConnection = {
 };
 
 // IORedis client for direct usage (rate limiting, pub/sub, etc.)
-export const ioRedisClient = new IORedis(REDIS_URL, {
+export const ioRedisClient = new IORedis(REDIS_URL || 'redis://localhost:6379', {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
+  lazyConnect: true,
 });
 
 export const connectRedis = async () => {

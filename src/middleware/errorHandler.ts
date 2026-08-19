@@ -4,8 +4,8 @@ import { logger } from '../utils/logger';
 
 
 export const errorHandler = (err: any, req: Request, res: Response, _next: NextFunction): void => {
-  const statusCode = err.statusCode || 500;
-  const message = err.isOperational ? err.message : 'Internal server error';
+  const statusCode = err.statusCode || (err.code === 11000 ? 409 : err.name === 'ValidationError' ? 400 : 500);
+  const message = err.isOperational ? err.message : err.code === 11000 ? 'A record with that value already exists.' : err.name === 'ValidationError' ? 'Invalid request data.' : 'Internal server error';
 
   logger.error({
     message: err.message,
