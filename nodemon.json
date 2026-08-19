@@ -1,7 +1,7 @@
 {
   "watch": ["src"],
   "ext": "ts",
-  "exec": "ts-node -r tsconfig-paths/register src/server.ts",
+  "exec": "node --env-file-if-exists=/vercel/share/.env.project -r ts-node/register -r tsconfig-paths/register src/server.ts",
   "ignore": ["src/**/*.test.ts"],
   "env": {
     "NODE_ENV": "development"

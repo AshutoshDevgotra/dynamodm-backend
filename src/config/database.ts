@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { logger } from '../utils/logger';
 
 export const connectDB = async (): Promise<void> => {
-  const uri = process.env.MONGODB_URI?.trim();
+  const uri = (process.env.MONGODB_URI || process.env.MONGODB_CONNECTION_STRING)?.trim();
   if (!uri) throw new Error('MONGODB_URI is required to start the backend.');
   try {
     await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000, connectTimeoutMS: 10000, maxPoolSize: 10 });
