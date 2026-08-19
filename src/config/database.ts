@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 import { logger } from '../utils/logger';
 
 export const connectDB = async (): Promise<void> => {
+  if (mongoose.connection.readyState === 1) return;
+  if (mongoose.connection.readyState === 2) {
+    await mongoose.connection.asPromise();
+    return;
+  }
+
   const uri = (process.env.MONGODB_URI || process.env.MONGODB_CONNECTION_STRING)?.trim();
   if (!uri) throw new Error('MONGODB_URI is required to start the backend.');
   try {

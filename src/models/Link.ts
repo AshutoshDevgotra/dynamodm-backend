@@ -23,6 +23,5 @@ const LinkSchema = new Schema<ILink>(
   { timestamps: true }
 );
 
-LinkSchema.index({ shortCode: 1 }, { unique: true });
 
 export const Link = mongoose.model<ILink>('Link', LinkSchema);

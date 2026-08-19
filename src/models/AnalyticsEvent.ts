@@ -41,7 +41,7 @@ const AnalyticsEventSchema = new Schema<IAnalyticsEvent>(
     automationRuleId: { type: Schema.Types.ObjectId, ref: 'AutomationRule' },
     leadId: { type: Schema.Types.ObjectId, ref: 'Lead' },
     metadata: { type: Schema.Types.Mixed, default: {} },
-    timestamp: { type: Date, default: Date.now, index: true },
+    timestamp: { type: Date, default: Date.now },
   },
   { timestamps: false }
 );

@@ -1,12 +1,14 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
+
 import { User, IUser } from '../../models/User';
 import { Subscription } from '../../models/Subscription';
 import { Brand } from '../../models/Brand';
 import { generateToken, authenticate, AuthRequest } from '../../middleware/auth';
 import { authLimiter } from '../../middleware/rateLimiter';
 import { AppError } from '../../middleware/errorHandler';
+import { connectDB } from '../../config/database';
 import nodemailer from 'nodemailer';
 
 const router = Router();
@@ -28,26 +30,17 @@ const normalizeRegistration = (body: Record<string, unknown>) => {
 const safeUser = (user: IUser) => ({ id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar });
 
 const createSignupRecords = async (data: { name: string; email: string; password?: string; role: 'CREATOR' | 'BRAND'; googleId?: string; avatar?: string }) => {
-  const session = await mongoose.startSession();
-  try {
-    let createdUser: IUser;
-    await session.withTransaction(async () => {
-      const users = await User.create([{ ...data, isVerified: true }], { session });
-      createdUser = users[0];
-      await Subscription.create([{ userId: createdUser._id, plan: 'free' }], { session });
-      if (data.role === 'BRAND') {
-        const domain = data.email.split('@')[1];
-        await Brand.create([{
-          userId: createdUser._id,
-          companyName: data.name,
-          verificationStatus: domain && !publicEmailDomains.has(domain) ? 'VERIFIED' : 'PENDING',
-        }], { session });
-      }
+  const user = await User.create({ ...data, isVerified: true });
+  await Subscription.create({ userId: user._id, plan: 'free' });
+  if (data.role === 'BRAND') {
+    const domain = data.email.split('@')[1];
+    await Brand.create({
+      userId: user._id,
+      companyName: data.name,
+      verificationStatus: domain && !publicEmailDomains.has(domain) ? 'VERIFIED' : 'PENDING',
     });
-    return createdUser!;
-  } finally {
-    await session.endSession();
   }
+  return user;
 };
 
 router.post('/register', authLimiter, async (req: Request, res: Response): Promise<void> => {
@@ -63,15 +56,39 @@ router.post('/register', authLimiter, async (req: Request, res: Response): Promi
 });
 
 router.post('/login', authLimiter, async (req: Request, res: Response): Promise<void> => {
-  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const password = typeof req.body.password === 'string' ? req.body.password : '';
-  if (!email || !password) throw new AppError('Email and password are required.', 400);
-  const user = await User.findOne({ email }).select('+password');
-  if (!user || !user.password) throw new AppError('Invalid credentials.', 401);
-  if (!user.isActive) throw new AppError('Account suspended. Contact support.', 403);
-  if (!(await user.comparePassword(password))) throw new AppError('Invalid credentials.', 401);
-  const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-  res.json({ success: true, data: { token, user: safeUser(user) } });
+  let step = 'entry';
+  try {
+    // #region agent log
+    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'E',location:'auth.ts:login:entry',message:'login hit',data:{mongoState:mongoose.connection.readyState,bodyType:typeof req.body,hasBody:!!req.body,keys:req.body?Object.keys(req.body):[],emailType:typeof req.body?.email,passwordLen:typeof req.body?.password==='string'?req.body.password.length:null,jwtExpiresIn:process.env.JWT_EXPIRES_IN||null,jwtSecretLen:(process.env.JWT_SECRET||'').length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    if (!email || !password) throw new AppError('Email and password are required.', 400);
+    step = 'findUser';
+    const user = await User.findOne({ email }).select('+password');
+    // #region agent log
+    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'B',location:'auth.ts:login:findUser',message:'user lookup result',data:{found:!!user,hasPassword:!!user?.password,hashPrefix:typeof user?.password==='string'?user.password.slice(0,4):null,hasCompare:typeof user?.comparePassword,isActive:user?.isActive,role:user?.role||null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (!user || !user.password) throw new AppError('Invalid credentials.', 401);
+    if (!user.isActive) throw new AppError('Account suspended. Contact support.', 403);
+    step = 'comparePassword';
+    const passwordMatch = await user.comparePassword(password);
+    // #region agent log
+    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'C',location:'auth.ts:login:compare',message:'password compare finished',data:{passwordMatch},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (!passwordMatch) throw new AppError('Invalid credentials.', 401);
+    step = 'generateToken';
+    const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
+    // #region agent log
+    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'A',location:'auth.ts:login:token',message:'token generated',data:{tokenLen:token.length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    res.json({ success: true, data: { token, user: safeUser(user) } });
+  } catch (error: any) {
+    // #region agent log
+    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'A',location:'auth.ts:login:catch',message:'login threw',data:{step,name:error?.name,errMessage:error?.message,status:error?.status,statusCode:error?.statusCode,isOperational:error?.isOperational},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    throw error;
+  }
 });
 
 router.post('/forgot-password', authLimiter, async (req: Request, res: Response): Promise<void> => {
@@ -133,6 +150,7 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
   if (!profileRes.ok) throw new AppError('Unable to load Google profile.', 401);
   const profile = await profileRes.json() as { id: string; email: string; name: string; picture: string };
+  await connectDB();
   const existingUser = await User.findOne({ $or: [{ googleId: profile.id }, { email: profile.email.toLowerCase() }] });
   const user = existingUser || await createSignupRecords({ name: profile.name, email: profile.email.toLowerCase(), googleId: profile.id, avatar: profile.picture, role: 'CREATOR' });
   if (existingUser && !existingUser.googleId) { existingUser.googleId = profile.id; if (!existingUser.avatar) existingUser.avatar = profile.picture; await existingUser.save({ validateBeforeSave: false }); }
