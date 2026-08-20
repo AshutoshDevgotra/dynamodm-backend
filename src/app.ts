@@ -24,6 +24,9 @@ import paymentRoutes from './modules/payments/razorpay';
 
 const app = express();
 
+// Render / reverse-proxy deployments set X-Forwarded-* headers.
+app.set('trust proxy', 1);
+
 // ─── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
