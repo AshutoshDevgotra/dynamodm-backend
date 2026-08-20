@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
+import mongoose from 'mongoose';
 import { authenticate, AuthRequest } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { AppError } from '../../middleware/errorHandler';
@@ -233,6 +234,21 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
   const facebookPages = pages.map((p) => ({ id: p.id, name: p.name }));
 
+  // Enforce one Instagram per account:
+  // If this instagramBusinessId is already connected to a DIFFERENT user, disconnect it there.
+  await CreatorAccount.updateMany(
+    { instagramBusinessId: igBusinessId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
+    {
+      $set: { isConnected: false, scopes: [] },
+      $unset: {
+        instagramBusinessId: '', pageId: '', facebookPages: '',
+        accessToken: '', userAccessToken: '', tokenExpiry: '',
+        username: '', name: '', profilePic: '', followersCount: '',
+      },
+    }
+  );
+  logger.info(`✅ Cleared duplicate CreatorAccounts for IG ${igBusinessId} (kept userId ${userId})`);
+
   // Subscribe the App to the Facebook Page to receive live webhooks for the linked Instagram account
   try {
     await axios.post(`${META_API}/${pageWithIG.id}/subscribed_apps`, null, {
@@ -403,7 +419,26 @@ router.get('/public-page-metadata', authenticate, async (req: AuthRequest, res: 
 
 // ─── DELETE /api/meta/disconnect ─────────────────────────────────────────────
 router.delete('/disconnect', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  await CreatorAccount.findOneAndUpdate({ userId: req.user!.id }, { isConnected: false, accessToken: undefined });
+  // Wipe all Instagram-related fields so reconnecting starts completely fresh
+  await CreatorAccount.findOneAndUpdate(
+    { userId: req.user!.id },
+    {
+      $set: { isConnected: false, scopes: [] },
+      $unset: {
+        instagramBusinessId: '',
+        pageId: '',
+        facebookPages: '',
+        accessToken: '',
+        userAccessToken: '',
+        tokenExpiry: '',
+        username: '',
+        name: '',
+        profilePic: '',
+        followersCount: '',
+        'profile.audienceDemographics': '',
+      },
+    }
+  );
   res.json({ success: true, message: 'Instagram account disconnected.' });
 });
 
