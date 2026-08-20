@@ -136,13 +136,16 @@ router.put('/me', authenticate, async (req: AuthRequest, res: Response): Promise
 
 router.post('/logout', (_req: Request, res: Response): void => { res.clearCookie('token'); res.json({ success: true, message: 'Logged out successfully.' }); });
 
-router.get('/google', (_req: Request, res: Response): void => {
-  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: process.env.GOOGLE_CALLBACK_URL as string, response_type: 'code', scope: 'profile email', access_type: 'offline' });
+router.get('/google', (req: Request, res: Response): void => {
+  // Carry ?plan= through OAuth by embedding it in the state param (jwt|plan=pro)
+  const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
+  const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
+  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: process.env.GOOGLE_CALLBACK_URL as string, response_type: 'code', scope: 'profile email', access_type: 'offline', state });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
 router.get('/google/callback', async (req: Request, res: Response): Promise<void> => {
-  const { code } = req.query as { code: string };
+  const { code, state: oauthState } = req.query as { code: string; state?: string };
   if (!code) throw new AppError('No authorization code received.', 400);
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: process.env.GOOGLE_CALLBACK_URL!, grant_type: 'authorization_code' }) });
   if (!tokenRes.ok) throw new AppError('Google authentication failed.', 401);
@@ -155,10 +158,18 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const user = existingUser || await createSignupRecords({ name: profile.name, email: profile.email.toLowerCase(), googleId: profile.id, avatar: profile.picture, role: 'CREATOR' });
   if (existingUser && !existingUser.googleId) { existingUser.googleId = profile.id; if (!existingUser.avatar) existingUser.avatar = profile.picture; await existingUser.save({ validateBeforeSave: false }); }
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-  const clientUrl = process.env.NODE_ENV === 'production' && (!process.env.CLIENT_URL || process.env.CLIENT_URL.includes('localhost'))
-    ? 'https://dynamodm-frontend.vercel.app'
-    : process.env.CLIENT_URL;
-  res.redirect(`${clientUrl}/creator?token=${token}`);
+  const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
+
+  // Carry ?plan= through OAuth if embedded in state (format: placeholder|plan=pro)
+  let planRedirect = '';
+  try {
+    const stateParts = oauthState?.split('|');
+    if (stateParts && stateParts.length > 1) {
+      planRedirect = `&${stateParts[1]}`; // e.g. &plan=pro
+    }
+  } catch {}
+
+  res.redirect(`${clientUrl}/creator?token=${token}${planRedirect}`);
 });
 
 export default router;
