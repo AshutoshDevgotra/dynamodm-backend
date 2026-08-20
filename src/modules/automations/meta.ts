@@ -4,7 +4,6 @@ import axios from 'axios';
 import { authenticate, AuthRequest } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { AppError } from '../../middleware/errorHandler';
-import { webhookQueue } from '../../workers/queues';
 import { getRedis } from '../../config/redis';
 import { logger } from '../../utils/logger';
 import { processWebhookEvent } from '../../engine/ruleEngine';
@@ -539,33 +538,25 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   // ── Step 4: Acknowledge immediately (Meta requires < 20s response) ────────
   res.status(200).send('EVENT_RECEIVED');
 
-  // ── Step 5: Queue for async processing ─────────────────────────────────────
+  // ── Step 5: Process inline (no queue dependency) ────────────────────────────
+  // We process synchronously after acknowledging Meta. This is safe because:
+  // - We already sent 200 above, so Meta won't time out
+  // - Render handles the async tail without a queue
+  // - Removes Redis-as-queue as a failure point entirely
   if (body.object === 'instagram' || body.object === 'page') {
     const hasChanges = body.entry?.some(e => e.changes && e.changes.length > 0);
     const hasMessaging = body.entry?.some(e => e.messaging && e.messaging.length > 0);
 
     if (hasChanges || hasMessaging) {
-      if (process.env.NODE_ENV === 'development') {
-        logger.info('🚀 Processing webhook synchronously in development to bypass shared queue');
-        await processWebhookEvent(body);
-      } else {
-        logger.info('📤 Queueing webhook for async processing', {
-          object: body.object,
-          hasChanges,
-          hasMessaging,
-        });
-        if (!webhookQueue) {
-      logger.warn('Webhook queue skipped because REDIS_URL is not configured');
-      res.status(202).json({ success: true, message: 'Webhook received; queue processing is disabled.' });
-      return;
-    }
-    await webhookQueue.add('process-webhook', { payload: body }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
-      }
+      logger.info('🚀 Processing webhook inline', { object: body.object, hasChanges, hasMessaging });
+      processWebhookEvent(body).catch((err: Error) => {
+        logger.error('❌ Webhook processing error', { message: err.message, stack: err.stack });
+      });
     } else {
-      logger.info('ℹ️ Webhook has no changes or messaging to process — skipping queue');
+      logger.info('ℹ️ Webhook has no changes or messaging to process — skipping');
     }
   } else {
-    logger.info(`ℹ️ Ignoring webhook with object type: ${body.object} (expected 'instagram' or 'page')`);
+    logger.info(`ℹ️ Ignoring webhook object type: ${body.object}`);
   }
 });
 
