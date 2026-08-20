@@ -90,29 +90,18 @@ const REQUIRED_SCOPES = [
 
 // ─── GET /api/meta/connect ────────────────────────────────────────────────────
 router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => {
-  // Use Instagram's native OAuth endpoint — shows the Instagram consent UI
-  // (instagram.com/oauth/authorize) exactly like the screenshot from SuperProfile
-  const igScopes = [
-    'instagram_basic',
-    'instagram_manage_comments',
-    'instagram_manage_messages',
-    'instagram_manage_insights',
-    'pages_show_list',
-    'pages_manage_metadata',
-    'pages_read_engagement',
-    'business_management',
-  ].join(',');
-
   const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
   const params = new URLSearchParams({
     client_id: process.env.META_APP_ID as string,
     redirect_uri: process.env.META_REDIRECT_URI as string,
-    scope: igScopes,
+    scope: REQUIRED_SCOPES.join(','),
     response_type: 'code',
+    auth_type: 'rerequest',
     state: token,
   });
 
-  res.json({ success: true, data: { authUrl: `https://www.instagram.com/oauth/authorize?${params}` } });
+  const apiVersion = process.env.META_API_VERSION || 'v20.0';
+  res.json({ success: true, data: { authUrl: `https://www.facebook.com/${apiVersion}/dialog/oauth?${params}` } });
 });
 
 // ─── GET /api/meta/callback ───────────────────────────────────────────────────
@@ -134,26 +123,24 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   }
 
   // Exchange code for short-lived token
-  // Instagram Business Login uses api.instagram.com with POST + form data
-  const tokenFormData = new URLSearchParams({
-    client_id: process.env.META_APP_ID!,
-    client_secret: process.env.META_APP_SECRET!,
-    grant_type: 'authorization_code',
-    redirect_uri: process.env.META_REDIRECT_URI!,
-    code,
-  });
-  const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', tokenFormData.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  const tokenRes = await axios.get(`${META_API}/oauth/access_token`, {
+    params: {
+      client_id: process.env.META_APP_ID,
+      client_secret: process.env.META_APP_SECRET,
+      redirect_uri: process.env.META_REDIRECT_URI,
+      code,
+    },
   });
 
   const { access_token } = tokenRes.data as { access_token: string };
 
-  // Exchange for long-lived token via Graph API
+  // Exchange for long-lived token
   const longLivedRes = await axios.get(`${META_API}/oauth/access_token`, {
     params: {
-      grant_type: 'ig_exchange_token',
+      grant_type: 'fb_exchange_token',
+      client_id: process.env.META_APP_ID,
       client_secret: process.env.META_APP_SECRET,
-      access_token,
+      fb_exchange_token: access_token,
     },
   });
 
