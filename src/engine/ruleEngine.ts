@@ -99,23 +99,54 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
   });
 
   const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': 'COMMENT' });
+  logger.info(`🔍 Found ${rules.length} active COMMENT automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
-    if (rule.trigger.postId && comment.media && rule.trigger.postId !== comment.media.id) continue;
-    if (!matchesKeyword(comment.text, rule.trigger.keywords)) continue;
+    // Normalise postId comparison — Meta can return numeric strings
+    const rulePostId = rule.trigger.postId ? String(rule.trigger.postId) : null;
+    const commentPostId = comment.media?.id ? String(comment.media.id) : null;
+    if (rulePostId && commentPostId && rulePostId !== commentPostId) {
+      logger.info(`⏭️ Skipping rule ${rule._id} — postId mismatch (rule: ${rulePostId}, comment: ${commentPostId})`);
+      continue;
+    }
 
+    if (!matchesKeyword(comment.text, rule.trigger.keywords)) {
+      logger.info(`⏭️ Skipping rule ${rule._id} — keyword not matched (keywords: ${rule.trigger.keywords}, text: "${comment.text}")`);
+      continue;
+    }
+
+    logger.info(`✅ Rule ${rule._id} matched for comment from ${comment.from.id}`);
+
+    // ── Redis dedup / cooldown (non-fatal — if Redis is down, proceed anyway) ──
     const redis = getRedis();
     const cooldownKey = `cooldown:${creatorId}:${rule._id}:${comment.from.id}`;
     const duplicateKey = `duplicate:${creatorId}:${comment.id}`;
 
-    if (await redis.get(duplicateKey)) continue;
-    await redis.setex(duplicateKey, 3600, '1');
+    try {
+      if (await redis.get(duplicateKey)) {
+        logger.info(`⏭️ Skipping rule ${rule._id} — duplicate comment ${comment.id}`);
+        continue;
+      }
+      await redis.setex(duplicateKey, 3600, '1');
 
-    if (await redis.get(cooldownKey)) continue;
-    await redis.setex(cooldownKey, 60 * 60, '1'); // 60 mins cooldown
+      if (await redis.get(cooldownKey)) {
+        logger.info(`⏭️ Skipping rule ${rule._id} — user ${comment.from.id} is in cooldown`);
+        continue;
+      }
+      await redis.setex(cooldownKey, 60 * 60, '1');
+    } catch (redisErr: any) {
+      // Redis failure must not block DM delivery — log and continue
+      logger.warn(`⚠️ Redis error during cooldown check for rule ${rule._id} — proceeding without dedup`, {
+        message: redisErr?.message,
+        code: redisErr?.code,
+      });
+    }
 
     const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM');
-    if (!sendDmStep || !sendDmStep.content) continue;
+    if (!sendDmStep || !sendDmStep.content) {
+      logger.warn(`⚠️ Rule ${rule._id} has no SEND_DM step with content — skipping`);
+      continue;
+    }
 
     const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: comment.from.id },
@@ -131,7 +162,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
     );
 
     if (!dmQueue) {
-      logger.warn('DM automation skipped because REDIS_URL is not configured');
+      logger.warn('⚠️ DM queue not available (REDIS_URL not set) — skipping DM');
       continue;
     }
 
@@ -149,10 +180,11 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
     }, {
-      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0
+      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0,
     });
 
     await DMLog.findByIdAndUpdate(dmLog._id, { jobId: job.id });
+    logger.info(`📤 DM job ${job.id} queued for ${comment.from.id} (rule ${rule._id})`);
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'automation_triggered',
@@ -176,22 +208,43 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
   });
 
   const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': 'DM' });
+  logger.info(`🔍 Found ${rules.length} active DM automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
-    if (!matchesKeyword(messageText, rule.trigger.keywords)) continue;
+    if (!matchesKeyword(messageText, rule.trigger.keywords)) {
+      logger.info(`⏭️ Skipping rule ${rule._id} — keyword not matched`);
+      continue;
+    }
 
+    // ── Redis dedup / cooldown (non-fatal) ────────────────────────────────────
     const redis = getRedis();
     const cooldownKey = `cooldown:${creatorId}:${rule._id}:${fromId}`;
     const duplicateKey = `duplicate:${creatorId}:${messageId}`;
 
-    if (await redis.get(duplicateKey)) continue;
-    await redis.setex(duplicateKey, 3600, '1');
+    try {
+      if (await redis.get(duplicateKey)) {
+        logger.info(`⏭️ Skipping rule ${rule._id} — duplicate message ${messageId}`);
+        continue;
+      }
+      await redis.setex(duplicateKey, 3600, '1');
 
-    if (await redis.get(cooldownKey)) continue;
-    await redis.setex(cooldownKey, 60 * 60, '1');
+      if (await redis.get(cooldownKey)) {
+        logger.info(`⏭️ Skipping rule ${rule._id} — user ${fromId} is in cooldown`);
+        continue;
+      }
+      await redis.setex(cooldownKey, 60 * 60, '1');
+    } catch (redisErr: any) {
+      logger.warn(`⚠️ Redis error during cooldown check for rule ${rule._id} — proceeding without dedup`, {
+        message: redisErr?.message,
+        code: redisErr?.code,
+      });
+    }
 
     const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM');
-    if (!sendDmStep || !sendDmStep.content) continue;
+    if (!sendDmStep || !sendDmStep.content) {
+      logger.warn(`⚠️ Rule ${rule._id} has no SEND_DM step with content — skipping`);
+      continue;
+    }
 
     const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: fromId },
@@ -206,7 +259,7 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
     );
 
     if (!dmQueue) {
-      logger.warn('DM automation skipped because REDIS_URL is not configured');
+      logger.warn('⚠️ DM queue not available (REDIS_URL not set) — skipping DM');
       continue;
     }
 
@@ -224,10 +277,11 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
     }, {
-      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0
+      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0,
     });
 
     await DMLog.findByIdAndUpdate(dmLog._id, { jobId: job.id });
+    logger.info(`📤 DM job ${job.id} queued for ${fromId} (rule ${rule._id})`);
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'automation_triggered',
