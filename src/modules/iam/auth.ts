@@ -155,7 +155,10 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const user = existingUser || await createSignupRecords({ name: profile.name, email: profile.email.toLowerCase(), googleId: profile.id, avatar: profile.picture, role: 'CREATOR' });
   if (existingUser && !existingUser.googleId) { existingUser.googleId = profile.id; if (!existingUser.avatar) existingUser.avatar = profile.picture; await existingUser.save({ validateBeforeSave: false }); }
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-  res.redirect(`${process.env.CLIENT_URL}/creator?token=${token}`);
+  const clientUrl = process.env.NODE_ENV === 'production' && (!process.env.CLIENT_URL || process.env.CLIENT_URL.includes('localhost'))
+    ? 'https://dynamodm-frontend.vercel.app'
+    : process.env.CLIENT_URL;
+  res.redirect(`${clientUrl}/creator?token=${token}`);
 });
 
 export default router;
