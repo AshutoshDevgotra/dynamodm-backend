@@ -97,8 +97,9 @@ router.get('/connect', authenticate, (req: AuthRequest, res: Response): void => 
     redirect_uri: process.env.META_REDIRECT_URI as string,
     scope: scopes,
     response_type: 'code',
-    auth_type: 'rerequest', // Forces Meta to ask for missing permissions
-    state: token, // Pass token in state
+    auth_type: 'rerequest',   // Always re-show the permission dialog
+    display: 'popup',         // Optimised popup layout from Meta
+    state: token,
   });
 
   const apiVersion = process.env.META_API_VERSION || 'v20.0';
@@ -276,12 +277,20 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   const html = `
     <html>
-      <body>
+      <head><title>Connecting...</title></head>
+      <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fff;">
+        <div style="text-align:center">
+          <div style="font-size:32px;margin-bottom:12px">&#x2705;</div>
+          <p style="font-size:15px;color:#a78bfa">Instagram connected! Closing...</p>
+        </div>
         <script>
-          window.opener.postMessage({ type: 'META_AUTH_SUCCESS', username: '${igProfile.username}' }, '${frontendUrl}');
-          window.close();
+          try {
+            if (window.opener) {
+              window.opener.postMessage({ type: 'META_AUTH_SUCCESS', username: '${igProfile.username}' }, '${frontendUrl}');
+            }
+          } catch(e) {}
+          setTimeout(function() { window.close(); }, 800);
         </script>
-        <p>Authentication successful. You can close this window.</p>
       </body>
     </html>
   `;
