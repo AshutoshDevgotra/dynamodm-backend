@@ -53,14 +53,14 @@ router.get('/status', authenticate, async (req: AuthRequest, res: Response): Pro
 
 // ─── GET /api/meta/posts ────────────────────────────────────────────────────────
 router.get('/posts', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+accessToken');
-  if (!account || !account.accessToken || !account.instagramBusinessId) {
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
+  if (!account || !account.igAccessToken || !account.igUserId) {
     throw new AppError('Instagram account not connected.', 400);
   }
 
-  const token = decryptToken(account.accessToken);
+  const token = decryptToken(account.igAccessToken);
   try {
-    const igRes = await axios.get(`${META_API}/${account.instagramBusinessId}/media`, {
+    const igRes = await axios.get(`${META_API}/${account.igUserId}/media`, {
       params: {
         fields: 'id,caption,media_url,media_type,thumbnail_url,permalink,timestamp',
         limit: 30,
@@ -227,20 +227,17 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     }
   }
 
-  const encryptedToken = encryptToken(pageWithIG.access_token);
-  const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
-  const facebookPages = pages.map((p) => ({ id: p.id, name: p.name }));
+  const igTokenExpiresAt = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
   // Enforce one Instagram per account:
-  // If this instagramBusinessId is already connected to a DIFFERENT user, disconnect it there.
+  // If this igUserId is already connected to a DIFFERENT user, disconnect it there.
   await CreatorAccount.updateMany(
-    { instagramBusinessId: igBusinessId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
+    { igUserId: igBusinessId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
     {
       $set: { isConnected: false, scopes: [] },
       $unset: {
-        instagramBusinessId: '', pageId: '', facebookPages: '',
-        accessToken: '', userAccessToken: '', tokenExpiry: '',
-        username: '', name: '', profilePic: '', followersCount: '',
+        igUserId: '', igAccessToken: '', igTokenExpiresAt: '',
+        igUsername: '', name: '', profilePic: '', followersCount: '',
       },
     }
   );
@@ -263,13 +260,10 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
   const updatePayload: any = {
     userId: userId,
-    instagramBusinessId: igBusinessId,
-    pageId: pageWithIG.id,
-    facebookPages,
-    accessToken: encryptedToken,
-    userAccessToken: encryptToken(longLivedToken),
-    tokenExpiry,
-    username: igProfile.username,
+    igUserId: igBusinessId,
+    igAccessToken: encryptToken(longLivedToken),
+    igTokenExpiresAt,
+    igUsername: igProfile.username,
     name: igProfile.name,
     profilePic: igProfile.profile_picture_url,
     followersCount: igProfile.followers_count,
@@ -312,14 +306,14 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
 // ─── GET /api/meta/status ─────────────────────────────────────────────────────
 router.get('/status', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-accessToken -userAccessToken');
+  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-igAccessToken -igAccessToken');
   res.json({ success: true, data: { account } });
 });
 
 async function getUserGraphToken(userId: string): Promise<string | null> {
-  const account = await CreatorAccount.findOne({ userId }).select('+userAccessToken +accessToken');
-  if (account?.userAccessToken) return decryptToken(account.userAccessToken);
-  if (account?.accessToken) return decryptToken(account.accessToken);
+  const account = await CreatorAccount.findOne({ userId }).select('+igAccessToken +igAccessToken');
+  if (account?.igAccessToken) return decryptToken(account.igAccessToken);
+  if (account?.igAccessToken) return decryptToken(account.igAccessToken);
   return null;
 }
 
@@ -340,13 +334,13 @@ function pageMetadataPayload(pages: PublicPageAbout[], extra: Record<string, unk
 
 // ─── GET /api/meta/pages — managed Pages with labeled About fields ───────────
 router.get('/pages', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+userAccessToken');
-  if (!account || !account.userAccessToken) {
+  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+igAccessToken');
+  if (!account || !account.igAccessToken) {
     res.json({ success: true, data: pageMetadataPayload([], { connected: false }) });
     return;
   }
 
-  const token = decryptToken(account.userAccessToken);
+  const token = decryptToken(account.igAccessToken);
   try {
     const pagesRes = await axios.get(`${META_API}/me/accounts`, {
       params: {
@@ -383,9 +377,9 @@ router.get('/public-page-metadata', authenticate, async (req: AuthRequest, res: 
   const tokens = [userToken, appGraphToken()].filter((t, i, arr) => arr.indexOf(t) === i);
   let lastError = '';
 
-  for (const accessToken of tokens) {
+  for (const igAccessToken of tokens) {
     try {
-      const matches = await searchPublicPages(query, accessToken, limit);
+      const matches = await searchPublicPages(query, igAccessToken, limit);
       if (matches.length === 0) {
         res.json({
           success: true,
@@ -394,7 +388,7 @@ router.get('/public-page-metadata', authenticate, async (req: AuthRequest, res: 
         return;
       }
 
-      const pages = await fetchPagesAbout(matches.map((p) => p.id), accessToken);
+      const pages = await fetchPagesAbout(matches.map((p) => p.id), igAccessToken);
       res.json({
         success: true,
         data: pageMetadataPayload(pages, {
@@ -422,13 +416,10 @@ router.delete('/disconnect', authenticate, async (req: AuthRequest, res: Respons
     {
       $set: { isConnected: false, scopes: [] },
       $unset: {
-        instagramBusinessId: '',
-        pageId: '',
-        facebookPages: '',
-        accessToken: '',
-        userAccessToken: '',
-        tokenExpiry: '',
-        username: '',
+        igUserId: '',
+        igAccessToken: '',
+        igTokenExpiresAt: '',
+        igUsername: '',
         name: '',
         profilePic: '',
         followersCount: '',
@@ -439,14 +430,14 @@ router.delete('/disconnect', authenticate, async (req: AuthRequest, res: Respons
   res.json({ success: true, message: 'Instagram account disconnected.' });
 });
 
-// ─── GET /api/meta/check-token — Debug token scopes via Meta API ─────────────
+// ─── GET /api/meta/check-token — Debug token scopes via Meta API ───────────────
 router.get('/check-token', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+accessToken');
-  if (!account?.accessToken) {
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
+  if (!account?.igAccessToken) {
     throw new AppError('No connected Instagram account found.', 400);
   }
 
-  const token = decryptToken(account.accessToken);
+  const token = decryptToken(account.igAccessToken);
 
   try {
     // Call Meta debug_token endpoint
@@ -472,7 +463,7 @@ router.get('/check-token', authenticate, async (req: AuthRequest, res: Response)
         missingScopes,
         needsReconnect: missingScopes.length > 0,
         storedScopes: account.scopes,
-        tokenExpiry: account.tokenExpiry,
+        igTokenExpiresAt: account.igTokenExpiresAt,
       },
     });
   } catch (err: any) {
