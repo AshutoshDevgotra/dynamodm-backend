@@ -45,6 +45,16 @@ const REQUIRED_SCOPES = [
   'instagram_business_manage_comments',
 ];
 
+async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: string): Promise<void> {
+  await axios.post(`${INSTAGRAM_API}/${instagramUserId}/subscribed_apps`, null, {
+    params: {
+      subscribed_fields: 'comments,messages',
+      access_token: accessToken,
+    },
+  });
+  logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
+}
+
 router.get('/login', authenticate, (req: AuthRequest, res: Response): void => {
   const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
   const params = new URLSearchParams({
@@ -132,13 +142,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     };
 
     try {
-      await axios.post(`${INSTAGRAM_API}/${instagramUserId}/subscribed_apps`, null, {
-        params: {
-          subscribed_fields: 'comments,messages',
-          access_token: longToken,
-        },
-      });
-      logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
+      await subscribeInstagramWebhooks(instagramUserId, longToken);
     } catch (subscriptionError: any) {
       logger.error('Failed to subscribe Instagram account to webhooks', subscriptionError?.response?.data || subscriptionError);
     }
@@ -179,12 +183,28 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 });
 
 router.get('/status', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-igAccessToken');
+  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+igAccessToken');
+  if (account?.isConnected && account.igAccessToken && account.igUserId) {
+    try {
+      const accessToken = decryptToken(account.igAccessToken);
+      const profile = await getProfile(account.igUserId, accessToken);
+      const instagramUserId = profile.user_id || account.igUserId;
+      if (instagramUserId !== account.igUserId) {
+        account.igUserId = instagramUserId;
+        await account.save();
+      }
+      await subscribeInstagramWebhooks(instagramUserId, accessToken);
+    } catch (subscriptionError: any) {
+      logger.warn('Instagram webhook subscription refresh failed', subscriptionError?.response?.data || subscriptionError?.message || subscriptionError);
+    }
+  }
+  const accountData = account?.toObject() as Record<string, unknown> | undefined;
+  if (accountData) delete accountData.igAccessToken;
   res.json({
     success: true,
     data: {
       isConnected: Boolean(account?.isConnected),
-      account: account || null,
+      account: accountData || null,
     },
   });
 });
