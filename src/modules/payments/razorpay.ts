@@ -39,11 +39,11 @@ router.post('/onboard', authenticate, requireRole('creator'), async (req: AuthRe
     // Create Route Linked Account
     const account = await rzp.accounts.create({
       type: 'route',
-      email: email || `${creator.username}@dynamodm.temp`,
+      email: email || `${creator.igUsername}@dynamodm.temp`,
       phone: phone || '9999999999', // Dummy for MVP
-      legal_business_name: name || creator.name || creator.username,
+      legal_business_name: name || creator.name || creator.igUsername,
       business_type: 'individual',
-      contact_name: name || creator.name || creator.username,
+      contact_name: name || creator.name || creator.igUsername,
     } as any);
 
     // Save accountId to creator profile (dynamic typing for now since schema isn't fully updated with this field)

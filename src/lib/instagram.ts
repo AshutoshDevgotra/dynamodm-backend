@@ -32,7 +32,7 @@ export interface IGLongLivedToken {
   token_type: string;
 }
 
-async function handleIGError(error: any, context: string): Promise<never> {
+function handleIGError(error: any, context: string): never {
   const axiosError = error as AxiosError;
   const status = axiosError?.response?.status || 500;
   const data = axiosError?.response?.data as any;
@@ -67,7 +67,7 @@ export async function exchangeCodeForToken(
 
     return response.data;
   } catch (error) {
-    await handleIGError(error, 'exchangeCodeForToken');
+    handleIGError(error, 'exchangeCodeForToken');
   }
 }
 
@@ -86,7 +86,7 @@ export async function exchangeToLongLivedToken(
 
     return response.data;
   } catch (error) {
-    await handleIGError(error, 'exchangeToLongLivedToken');
+    handleIGError(error, 'exchangeToLongLivedToken');
   }
 }
 
@@ -101,7 +101,7 @@ export async function getProfile(igUserId: string, accessToken: string): Promise
 
     return response.data;
   } catch (error) {
-    await handleIGError(error, 'getProfile');
+    handleIGError(error, 'getProfile');
   }
 }
 
@@ -117,7 +117,7 @@ export async function getMedia(igUserId: string, accessToken: string, limit = 30
 
     return response.data.data || [];
   } catch (error) {
-    await handleIGError(error, 'getMedia');
+    handleIGError(error, 'getMedia');
   }
 }
 
@@ -139,7 +139,7 @@ export async function sendDM(
 
     return response.data;
   } catch (error) {
-    await handleIGError(error, 'sendDM');
+    handleIGError(error, 'sendDM');
   }
 }
 
@@ -161,6 +161,6 @@ export async function privateReplyToComment(
 
     return response.data;
   } catch (error) {
-    await handleIGError(error, 'privateReplyToComment');
+    handleIGError(error, 'privateReplyToComment');
   }
 }
