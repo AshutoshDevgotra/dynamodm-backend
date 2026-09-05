@@ -184,7 +184,18 @@ router.get('/posts', authenticate, async (req: AuthRequest, res: Response): Prom
     }
 
     const token = decryptToken(account.igAccessToken);
-    const posts = await getMedia(account.igUserId, token, 30);
+    const profile = await getProfile(account.igUserId, token);
+    const instagramUserId = profile.user_id || account.igUserId;
+
+    if (instagramUserId !== account.igUserId) {
+      await CreatorAccount.updateOne(
+        { _id: account._id },
+        { $set: { igUserId: instagramUserId } },
+      );
+      logger.info(`Migrated stored Instagram user ID for @${profile.username}`);
+    }
+
+    const posts = await getMedia(instagramUserId, token, 30);
     res.json({ success: true, data: { posts: posts || [] } });
   } catch (err: any) {
     logger.error('Failed to fetch Instagram posts:', err?.message || err);
