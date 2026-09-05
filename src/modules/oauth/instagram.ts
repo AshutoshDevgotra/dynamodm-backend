@@ -9,6 +9,7 @@ import {
   exchangeCodeForToken,
   exchangeToLongLivedToken,
   getProfile,
+  getMedia,
 } from '../../lib/instagram';
 
 const router = Router();
@@ -121,7 +122,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       igAccessToken: encryptedToken,
       igTokenExpiresAt: tokenExpiry,
       name: igProfile.username,
-      profilePic: igProfile.biography,
+      profilePic: igProfile.profile_picture_url,
       followersCount: igProfile.followers_count,
       isConnected: true,
       scopes: REQUIRED_SCOPES,
@@ -164,7 +165,30 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
 router.get('/status', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('-igAccessToken');
-  res.json({ success: true, data: { account } });
+  res.json({
+    success: true,
+    data: {
+      isConnected: Boolean(account?.isConnected),
+      account: account || null,
+    },
+  });
+});
+
+router.get('/posts', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
+    if (!account || !account.igAccessToken || !account.igUserId) {
+      res.json({ success: true, data: { posts: [] } });
+      return;
+    }
+
+    const token = decryptToken(account.igAccessToken);
+    const posts = await getMedia(account.igUserId, token, 30);
+    res.json({ success: true, data: { posts: posts || [] } });
+  } catch (err: any) {
+    logger.error('Failed to fetch Instagram posts:', err?.message || err);
+    res.json({ success: true, data: { posts: [] } });
+  }
 });
 
 router.delete('/disconnect', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {

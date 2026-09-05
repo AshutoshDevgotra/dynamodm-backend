@@ -30,8 +30,18 @@ app.set('trust proxy', 1);
 
 // ─── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet());
+const frontendOrigins = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
+  .filter((origin): origin is string => Boolean(origin?.trim()))
+  .flatMap((origin) => origin.split(','))
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV !== 'production') {
+  frontendOrigins.push('http://localhost:3000', 'http://localhost:3001');
+}
+
 app.use(cors({
-  origin: true, // Allow all origins dynamically in development
+  origin: frontendOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }));

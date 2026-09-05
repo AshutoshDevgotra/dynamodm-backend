@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios';
 import { logger } from '../utils/logger';
 
 const INSTAGRAM_API = `https://graph.instagram.com/v23.0`;
+const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 
 export interface IGProfile {
   id: string;
@@ -10,13 +11,17 @@ export interface IGProfile {
   followers_count: number;
   media_count: number;
   biography: string;
+  profile_picture_url?: string;
 }
 
 export interface IGMedia {
   id: string;
   caption?: string;
-  like_count: number;
-  comments_count: number;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+  like_count?: number;
+  comments_count?: number;
   timestamp?: string;
   media_type?: string;
 }
@@ -25,6 +30,7 @@ export interface IGShortLivedToken {
   access_token: string;
   user_id: string;
   token_type: string;
+  permissions?: string;
 }
 
 export interface IGLongLivedToken {
@@ -54,7 +60,7 @@ export async function exchangeCodeForToken(
 ): Promise<IGShortLivedToken> {
   try {
     const response = await axios.post(
-      `${INSTAGRAM_API}/oauth/access_token`,
+      INSTAGRAM_TOKEN_URL,
       new URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
@@ -65,7 +71,12 @@ export async function exchangeCodeForToken(
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
-    return response.data;
+    const token = Array.isArray(response.data?.data) ? response.data.data[0] : response.data;
+    if (!token?.access_token || !token?.user_id) {
+      throw new Error('Instagram returned an invalid short-lived token response');
+    }
+
+    return token;
   } catch (error) {
     handleIGError(error, 'exchangeCodeForToken');
   }
@@ -94,7 +105,7 @@ export async function getProfile(igUserId: string, accessToken: string): Promise
   try {
     const response = await axios.get(`${INSTAGRAM_API}/${igUserId}`, {
       params: {
-        fields: 'id,username,account_type,followers_count,media_count,biography',
+        fields: 'id,username,account_type,followers_count,media_count,biography,profile_picture_url',
         access_token: accessToken,
       },
     });
@@ -105,11 +116,16 @@ export async function getProfile(igUserId: string, accessToken: string): Promise
   }
 }
 
-export async function getMedia(igUserId: string, accessToken: string, limit = 30): Promise<IGMedia[]> {
+export async function getMedia(
+  igUserId: string,
+  accessToken: string,
+  limit = 30,
+  fields = 'id,caption,media_url,thumbnail_url,permalink,like_count,comments_count,timestamp,media_type'
+): Promise<IGMedia[]> {
   try {
     const response = await axios.get(`${INSTAGRAM_API}/${igUserId}/media`, {
       params: {
-        fields: 'id,caption,like_count,comments_count,timestamp,media_type',
+        fields,
         limit,
         access_token: accessToken,
       },
