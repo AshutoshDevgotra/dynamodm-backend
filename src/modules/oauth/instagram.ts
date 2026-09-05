@@ -93,10 +93,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     logger.info(`✅ Exchanged to long-lived token (expires in ${expires_in}s)`);
 
     const igProfile = await getProfile(igUserId, longToken);
-    logger.info(`✅ Fetched IG profile: @${igProfile.username}`);
+    const instagramUserId = igProfile.user_id || igUserId;
+    logger.info(`✅ Fetched IG profile: @${igProfile.username} (${instagramUserId})`);
 
     await CreatorAccount.updateMany(
-      { igUserId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
+      { igUserId: instagramUserId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
       {
         $set: { isConnected: false, scopes: [] },
         $unset: {
@@ -110,14 +111,14 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
         },
       }
     );
-    logger.info(`✅ Cleared duplicate CreatorAccounts for IG ${igUserId} (kept userId ${userId})`);
+    logger.info(`✅ Cleared duplicate CreatorAccounts for IG ${instagramUserId} (kept userId ${userId})`);
 
     const encryptedToken = encryptToken(longToken);
     const tokenExpiry = new Date(Date.now() + (expires_in || 60 * 60 * 24 * 60) * 1000);
 
     const updatePayload = {
       userId,
-      igUserId,
+      igUserId: instagramUserId,
       igUsername: igProfile.username,
       igAccessToken: encryptedToken,
       igTokenExpiresAt: tokenExpiry,

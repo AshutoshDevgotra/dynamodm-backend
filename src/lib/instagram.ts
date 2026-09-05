@@ -6,6 +6,7 @@ const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 
 export interface IGProfile {
   id: string;
+  user_id?: string;
   username: string;
   account_type: string;
   followers_count: number;
@@ -113,6 +114,7 @@ export async function getProfile(igUserId: string, accessToken: string): Promise
     return {
       ...response.data,
       id: response.data.user_id || igUserId,
+      user_id: response.data.user_id,
     };
   } catch (error) {
     handleIGError(error, 'getProfile');
