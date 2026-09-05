@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import axios from 'axios';
 import mongoose from 'mongoose';
 import { authenticate, AuthRequest } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
@@ -13,6 +14,7 @@ import {
 } from '../../lib/instagram';
 
 const router = Router();
+const INSTAGRAM_API = 'https://graph.instagram.com/v23.0';
 
 const ALGO = 'aes-256-gcm';
 const KEY = Buffer.from(process.env.ENCRYPTION_KEY || '0'.repeat(64), 'hex');
@@ -128,6 +130,18 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       isConnected: true,
       scopes: REQUIRED_SCOPES,
     };
+
+    try {
+      await axios.post(`${INSTAGRAM_API}/${instagramUserId}/subscribed_apps`, null, {
+        params: {
+          subscribed_fields: 'comments,messages',
+          access_token: longToken,
+        },
+      });
+      logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
+    } catch (subscriptionError: any) {
+      logger.error('Failed to subscribe Instagram account to webhooks', subscriptionError?.response?.data || subscriptionError);
+    }
 
     await CreatorAccount.findOneAndUpdate(
       { userId },

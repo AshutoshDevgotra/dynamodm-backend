@@ -31,6 +31,23 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   const body = req.body as { object: string; entry: Array<{ id: string; changes?: any[]; messaging?: any[] }> };
 
+  const signature = req.headers['x-hub-signature-256'];
+  const rawBody = (req as any).rawBody;
+  const appSecret = process.env.INSTAGRAM_APP_SECRET;
+  if (!signature || !rawBody || !appSecret) {
+    res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    return;
+  }
+
+  const expectedSignature = `sha256=${crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+  const receivedBuffer = Buffer.from(String(signature));
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (receivedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    logger.warn('Instagram webhook rejected: invalid signature');
+    res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    return;
+  }
+
   try {
     const redis = getRedis();
     const debugPayload = JSON.stringify({ receivedAt, object: body.object, body });
