@@ -83,7 +83,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
       timestamp: new Date(),
     });
 
-    throw err; // re-throw so BullMQ retries the job
+    throw err; // MongoDB worker records the failure and schedules a retry
   }
 }
 

@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { logger } from '../../utils/logger';
-import { getRedis } from '../../config/redis';
 import { processWebhookEvent } from '../../engine/ruleEngine';
 
 const router = Router();
@@ -46,15 +45,6 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     logger.warn('Instagram webhook rejected: invalid signature');
     res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
     return;
-  }
-
-  try {
-    const redis = getRedis();
-    const debugPayload = JSON.stringify({ receivedAt, object: body.object, body });
-    await redis.lpush('debug:webhook:payloads', debugPayload);
-    await redis.ltrim('debug:webhook:payloads', 0, 49);
-  } catch (debugErr) {
-    logger.warn('Failed to store debug webhook payload in Redis', debugErr);
   }
 
   res.status(200).send('EVENT_RECEIVED');

@@ -3,9 +3,9 @@ import { CreatorAccount } from '../models/CreatorAccount';
 import { Lead } from '../models/Lead';
 import { DMLog } from '../models/DMLog';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
-import { dmQueue } from '../workers/queues';
-import { getRedis } from '../config/redis';
+import { DMJob } from '../models/DMJob';
 import { logger } from '../utils/logger';
+import crypto from 'crypto';
 
 interface CommentEvent {
   from: { id: string; username?: string };
@@ -115,29 +115,17 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
 
     logger.info(`✅ Rule ${rule._id} matched for comment from ${comment.from.id}`);
 
-    // ── Redis dedup / cooldown (non-fatal — if Redis is down, proceed anyway) ──
-    const redis = getRedis();
-    const cooldownKey = `cooldown:${creatorId}:${rule._id}:${comment.from.id}`;
-    const duplicateKey = `duplicate:${creatorId}:${comment.id}`;
-
-    try {
-      if (await redis.get(duplicateKey)) {
-        logger.info(`⏭️ Skipping rule ${rule._id} — duplicate comment ${comment.id}`);
-        continue;
-      }
-      await redis.setex(duplicateKey, 3600, '1');
-
-      if (await redis.get(cooldownKey)) {
-        logger.info(`⏭️ Skipping rule ${rule._id} — user ${comment.from.id} is in cooldown`);
-        continue;
-      }
-      await redis.setex(cooldownKey, 60 * 60, '1');
-    } catch (redisErr: any) {
-      // Redis failure must not block DM delivery — log and continue
-      logger.warn(`⚠️ Redis error during cooldown check for rule ${rule._id} — proceeding without dedup`, {
-        message: redisErr?.message,
-        code: redisErr?.code,
-      });
+    const cooldownSince = new Date(Date.now() - 60 * 60 * 1000);
+    const recentDM = await DMLog.exists({
+      creatorId,
+      automationRuleId: rule._id,
+      instagramUserId: comment.from.id,
+      status: { $in: ['queued', 'sent'] },
+      createdAt: { $gte: cooldownSince },
+    });
+    if (recentDM) {
+      logger.info(`⏭️ Skipping rule ${rule._id} — user ${comment.from.id} is in cooldown`);
+      continue;
     }
 
     const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM');
@@ -159,30 +147,26 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       { upsert: true, new: true }
     );
 
-    if (!dmQueue) {
-      logger.warn('⚠️ DM queue not available (REDIS_URL not set) — skipping DM');
-      continue;
-    }
-
     const dmLog = await DMLog.create({
       creatorId, leadId: lead._id, automationRuleId: rule._id,
       instagramUserId: comment.from.id, instagramUsername: comment.from.username,
       messageText: sendDmStep.content, status: 'queued',
     });
 
-    const job = await dmQueue.add('send-dm', {
+    const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${comment.id}`).digest('hex');
+    await DMJob.create({
+      jobId,
       dmLogId: dmLog._id.toString(),
       creatorId, igUserId,
       recipientId: comment.from.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
-    }, {
-      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0,
+      nextAttemptAt: new Date(Date.now() + (sendDmStep.delaySeconds || 0) * 1000),
     });
 
-    await DMLog.findByIdAndUpdate(dmLog._id, { jobId: job.id });
-    logger.info(`📤 DM job ${job.id} queued for ${comment.from.id} (rule ${rule._id})`);
+    await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
+    logger.info(`📤 DM job ${jobId} queued for ${comment.from.id} (rule ${rule._id})`);
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'automation_triggered',
@@ -214,27 +198,16 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       continue;
     }
 
-    const redis = getRedis();
-    const cooldownKey = `cooldown:${creatorId}:${rule._id}:${fromId}`;
-    const duplicateKey = `duplicate:${creatorId}:${messageId}`;
-
-    try {
-      if (await redis.get(duplicateKey)) {
-        logger.info(`⏭️ Skipping rule ${rule._id} — duplicate message ${messageId}`);
-        continue;
-      }
-      await redis.setex(duplicateKey, 3600, '1');
-
-      if (await redis.get(cooldownKey)) {
+      const recentDM = await DMLog.exists({
+        creatorId,
+        automationRuleId: rule._id,
+        instagramUserId: fromId,
+        status: { $in: ['queued', 'sent'] },
+        createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) },
+      });
+      if (recentDM) {
         logger.info(`⏭️ Skipping rule ${rule._id} — user ${fromId} is in cooldown`);
         continue;
-      }
-      await redis.setex(cooldownKey, 60 * 60, '1');
-    } catch (redisErr: any) {
-      logger.warn(`⚠️ Redis error during cooldown check for rule ${rule._id} — proceeding without dedup`, {
-        message: redisErr?.message,
-        code: redisErr?.code,
-      });
     }
 
     const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM');
@@ -255,30 +228,26 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       { upsert: true, new: true }
     );
 
-    if (!dmQueue) {
-      logger.warn('⚠️ DM queue not available (REDIS_URL not set) — skipping DM');
-      continue;
-    }
-
     const dmLog = await DMLog.create({
       creatorId, leadId: lead._id, automationRuleId: rule._id,
       instagramUserId: fromId, instagramUsername: 'Unknown',
       messageText: sendDmStep.content, status: 'queued',
     });
 
-    const job = await dmQueue.add('send-dm', {
+      const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${messageId}`).digest('hex');
+      await DMJob.create({
+        jobId,
       dmLogId: dmLog._id.toString(),
       creatorId, igUserId,
       recipientId: fromId,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
-    }, {
-      delay: sendDmStep.delaySeconds ? sendDmStep.delaySeconds * 1000 : 0,
+        nextAttemptAt: new Date(Date.now() + (sendDmStep.delaySeconds || 0) * 1000),
     });
 
-    await DMLog.findByIdAndUpdate(dmLog._id, { jobId: job.id });
-    logger.info(`📤 DM job ${job.id} queued for ${fromId} (rule ${rule._id})`);
+      await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
+      logger.info(`📤 DM job ${jobId} queued for ${fromId} (rule ${rule._id})`);
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'automation_triggered',
