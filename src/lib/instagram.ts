@@ -103,14 +103,17 @@ export async function exchangeToLongLivedToken(
 
 export async function getProfile(igUserId: string, accessToken: string): Promise<IGProfile> {
   try {
-    const response = await axios.get(`${INSTAGRAM_API}/${igUserId}`, {
+    const response = await axios.get(`${INSTAGRAM_API}/me`, {
       params: {
-        fields: 'id,username,account_type,followers_count,media_count,biography,profile_picture_url',
+        fields: 'user_id,username,name,profile_picture_url,followers_count,biography',
         access_token: accessToken,
       },
     });
 
-    return response.data;
+    return {
+      ...response.data,
+      id: response.data.user_id || igUserId,
+    };
   } catch (error) {
     handleIGError(error, 'getProfile');
   }
