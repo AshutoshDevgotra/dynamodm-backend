@@ -9,7 +9,8 @@ import { globalLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 import authRoutes from './modules/iam/auth';
-import metaRoutes from './modules/automations/meta';
+import instagramOAuthRoutes from './modules/oauth/instagram';
+import instagramWebhookRoutes from './modules/webhooks/instagram';
 import automationRoutes from './modules/automations/automations';
 import leadsRoutes from './modules/automations/leads';
 import analyticsRoutes from './modules/analytics/analytics';
@@ -51,9 +52,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ─── Rate Limiting ─────────────────────────────────────────────────────────────
-// Skip global rate limiter for Meta webhook (it has its own limiter + HMAC verification)
+// Skip global rate limiter for Instagram webhook
 app.use((req, res, next) => {
-  if (req.path === '/api/meta/webhook') return next();
+  if (req.path === '/api/webhooks/instagram') return next();
   return globalLimiter(req, res, next);
 });
 
@@ -63,7 +64,8 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date()
 
 // ─── API Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
-app.use('/api/meta', metaRoutes);
+app.use('/api/instagram', instagramOAuthRoutes);
+app.use('/api/webhooks/instagram', instagramWebhookRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/analytics', analyticsRoutes);

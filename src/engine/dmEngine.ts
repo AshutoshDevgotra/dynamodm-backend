@@ -1,17 +1,15 @@
-import axios from 'axios';
 import { DMLog } from '../models/DMLog';
 import { Automation } from '../models/AutomationRule';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { CreatorAccount } from '../models/CreatorAccount';
-import { decryptToken } from '../modules/automations/meta';
+import { decryptToken } from '../modules/oauth/instagram';
+import { sendDM } from '../lib/instagram';
 import { logger } from '../utils/logger';
-
-const META_API = `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}`;
 
 interface DMJobData {
   dmLogId: string;
   creatorId: string;
-  igBusinessId: string;
+  igUserId: string;
   recipientId: string;
   message: string;
   ctaLink?: string;
@@ -20,58 +18,39 @@ interface DMJobData {
 }
 
 export async function sendInstagramDM(data: DMJobData): Promise<void> {
-  const { dmLogId, creatorId, igBusinessId, recipientId, message, ctaLink, automationRuleId } = data;
+  const { dmLogId, creatorId, igUserId, recipientId, message, ctaLink, automationRuleId } = data;
 
   logger.info(`📤 sendInstagramDM called`, {
-    dmLogId, creatorId, igBusinessId, recipientId, automationRuleId,
+    dmLogId, creatorId, igUserId, recipientId, automationRuleId,
     messagePreview: message.slice(0, 100),
   });
 
-  // Get creator access token
-  const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('+accessToken');
-  if (!account?.accessToken) {
+  const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('+igAccessToken');
+  if (!account?.igAccessToken) {
     logger.error(`❌ Creator ${creatorId} has no connected account or token is missing`);
     throw new Error('Creator Instagram account not connected or token missing.');
   }
 
-  const accessToken = decryptToken(account.accessToken);
-  logger.info(`🔑 Token decrypted for creator ${creatorId} (token length: ${accessToken.length})`);
+  const accessToken = decryptToken(account.igAccessToken);
+  logger.info(`🔑 Token decrypted for creator ${creatorId}`);
 
-  // Build message text
   let messageText = message;
   if (ctaLink) messageText += `\n\n${ctaLink}`;
 
-  const apiUrl = `${META_API}/${igBusinessId}/messages`;
-  const payload = {
-    recipient: { id: recipientId },
-    message: { text: messageText },
-  };
-
-  logger.info(`📡 Sending DM via Meta API`, {
-    url: apiUrl,
+  logger.info(`📡 Sending DM via Instagram API`, {
+    igUserId,
     recipientId,
     messageLength: messageText.length,
   });
 
   try {
-    // Send DM via Instagram Messaging API
-    const response = await axios.post(apiUrl, payload, {
-      params: { access_token: accessToken },
-      headers: { 'Content-Type': 'application/json' },
-    });
+    await sendDM(igUserId, recipientId, messageText, accessToken);
 
-    logger.info(`✅ Meta API DM response`, {
-      status: response.status,
-      data: JSON.stringify(response.data).slice(0, 300),
-    });
+    logger.info(`✅ DM sent successfully to ${recipientId}`);
 
-    // Update DM log
     await DMLog.findByIdAndUpdate(dmLogId, { status: 'sent', sentAt: new Date() });
-
-    // Update automation stats
     await Automation.findByIdAndUpdate(automationRuleId, { $inc: { 'stats.dmSentCount': 1 } });
 
-    // Track analytics
     await AnalyticsEvent.create({
       creatorId, eventType: 'dm_sent',
       automationRuleId,
@@ -81,31 +60,26 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
 
     logger.info(`✅ DM successfully sent to ${recipientId}`);
   } catch (err: unknown) {
-    const axiosErr = err as any;
-    const errorMessage = axiosErr?.response?.data?.error?.message || axiosErr?.message || 'Unknown error';
-    const errorCode = axiosErr?.response?.data?.error?.code;
-    const errorSubcode = axiosErr?.response?.data?.error?.error_subcode;
-    const httpStatus = axiosErr?.response?.status;
+    const error = err as any;
+    const errorMessage = error?.message || 'Unknown error';
+    const httpStatus = error?.status;
 
     logger.error(`❌ DM send failed`, {
       recipientId,
       httpStatus,
-      errorCode,
-      errorSubcode,
       errorMessage,
-      responseData: JSON.stringify(axiosErr?.response?.data).slice(0, 500),
     });
 
     await DMLog.findByIdAndUpdate(dmLogId, {
       status: 'failed',
-      errorMessage: `[${httpStatus}] ${errorMessage} (code: ${errorCode}, subcode: ${errorSubcode})`,
+      errorMessage: `[${httpStatus}] ${errorMessage}`,
       $inc: { retryCount: 1 },
     });
 
     await AnalyticsEvent.create({
       creatorId, eventType: 'dm_failed',
       automationRuleId,
-      metadata: { recipientId, error: errorMessage, errorCode, errorSubcode },
+      metadata: { recipientId, error: errorMessage },
       timestamp: new Date(),
     });
 

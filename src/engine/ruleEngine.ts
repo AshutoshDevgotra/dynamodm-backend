@@ -52,9 +52,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
 
   for (const entry of payload.entry) {
     const entryId = entry.id;
-    const query = isInstagram 
-      ? { instagramBusinessId: entryId, isConnected: true }
-      : { pageId: entryId, isConnected: true };
+    const query = { igUserId: entryId, isConnected: true };
 
     const creatorAccount = await CreatorAccount.findOne(query);
     if (!creatorAccount) continue;
@@ -74,7 +72,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
               id: commentData.id || '',
               media: mediaId ? { id: mediaId } : undefined,
             };
-            await handleComment(creatorId, creatorAccount.instagramBusinessId!, comment);
+            await handleComment(creatorId, creatorAccount.igUserId!, comment);
           }
         }
       }
@@ -84,13 +82,13 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     if (entry.messaging) {
       for (const msg of entry.messaging) {
         if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
-        await handleDM(creatorId, creatorAccount.instagramBusinessId!, msg);
+        await handleDM(creatorId, creatorAccount.igUserId!, msg);
       }
     }
   }
 }
 
-async function handleComment(creatorId: string, igBusinessId: string, comment: CommentEvent): Promise<void> {
+async function handleComment(creatorId: string, igUserId: string, comment: CommentEvent): Promise<void> {
   await AnalyticsEvent.create({
     creatorId,
     eventType: 'comment_received',
@@ -174,7 +172,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
 
     const job = await dmQueue.add('send-dm', {
       dmLogId: dmLog._id.toString(),
-      creatorId, igBusinessId,
+      creatorId, igUserId,
       recipientId: comment.from.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
@@ -195,7 +193,7 @@ async function handleComment(creatorId: string, igBusinessId: string, comment: C
   }
 }
 
-async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage): Promise<void> {
+async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Promise<void> {
   const fromId = msg.sender.id;
   const messageText = msg.message.text!;
   const messageId = msg.message.mid;
@@ -216,7 +214,6 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
       continue;
     }
 
-    // ── Redis dedup / cooldown (non-fatal) ────────────────────────────────────
     const redis = getRedis();
     const cooldownKey = `cooldown:${creatorId}:${rule._id}:${fromId}`;
     const duplicateKey = `duplicate:${creatorId}:${messageId}`;
@@ -271,7 +268,7 @@ async function handleDM(creatorId: string, igBusinessId: string, msg: DMMessage)
 
     const job = await dmQueue.add('send-dm', {
       dmLogId: dmLog._id.toString(),
-      creatorId, igBusinessId,
+      creatorId, igUserId,
       recipientId: fromId,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,

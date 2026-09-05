@@ -160,16 +160,62 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
 
-  // Carry ?plan= through OAuth if embedded in state (format: placeholder|plan=pro)
   let planRedirect = '';
   try {
     const stateParts = oauthState?.split('|');
     if (stateParts && stateParts.length > 1) {
-      planRedirect = `&${stateParts[1]}`; // e.g. &plan=pro
+      planRedirect = `&${stateParts[1]}`;
     }
   } catch {}
 
   res.redirect(`${clientUrl}/creator?token=${token}${planRedirect}`);
+});
+
+router.get('/instagram', (req: Request, res: Response): void => {
+  const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
+  const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
+  const params = new URLSearchParams({
+    client_id: process.env.INSTAGRAM_APP_ID as string,
+    redirect_uri: process.env.INSTAGRAM_REDIRECT_URI as string,
+    response_type: 'code',
+    scope: 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments',
+    state
+  });
+  res.redirect(`https://www.instagram.com/oauth/authorize?${params}`);
+});
+
+router.get('/instagram/callback', async (req: Request, res: Response): Promise<void> => {
+  const { code, state: oauthState } = req.query as { code: string; state?: string };
+  if (!code) throw new AppError('No authorization code received.', 400);
+
+  try {
+    const tokenRes = await fetch('https://api.instagram.com/oauth/access_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.INSTAGRAM_APP_ID!,
+        client_secret: process.env.INSTAGRAM_APP_SECRET!,
+        grant_type: 'authorization_code',
+        redirect_uri: process.env.INSTAGRAM_REDIRECT_URI!,
+        code,
+      }).toString(),
+    });
+    if (!tokenRes.ok) throw new AppError('Instagram authentication failed.', 401);
+    const tokenData = await tokenRes.json() as { access_token: string; user_id: string };
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
+
+    let planRedirect = '';
+    try {
+      const stateParts = oauthState?.split('|');
+      if (stateParts && stateParts.length > 1) {
+        planRedirect = `&${stateParts[1]}`;
+      }
+    } catch {}
+
+    res.redirect(`${clientUrl}/dashboard?connected=${tokenData.user_id}${planRedirect}`);
+  } catch (error: any) {
+    throw new AppError(error.message || 'Instagram authentication failed.', 401);
+  }
 });
 
 export default router;

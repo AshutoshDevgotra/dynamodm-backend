@@ -2,15 +2,12 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ICreatorAccount extends Document {
   userId: mongoose.Types.ObjectId;
-  instagramBusinessId?: string;
-  pageId?: string;
-  facebookPages?: { id: string; name: string }[];
-  accessToken?: string; // encrypted
-  userAccessToken?: string; // encrypted
-  tokenExpiry?: Date;
-  username?: string;
-  profilePic?: string;
+  igUserId?: string; // Instagram user ID from OAuth
+  igUsername?: string;
+  igAccessToken?: string; // encrypted long-lived token
+  igTokenExpiresAt?: Date; // 60-day expiry
   name?: string;
+  profilePic?: string;
   followersCount?: number;
   isConnected: boolean;
   scopes: string[];
@@ -39,15 +36,12 @@ export interface ICreatorAccount extends Document {
 const CreatorAccountSchema = new Schema<ICreatorAccount>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-    instagramBusinessId: { type: String },
-    pageId: { type: String },
-    facebookPages: [{ id: { type: String }, name: { type: String } }],
-    accessToken: { type: String, select: false }, // encrypted at rest
-    userAccessToken: { type: String, select: false }, // encrypted at rest
-    tokenExpiry: { type: Date },
-    username: { type: String },
-    profilePic: { type: String },
+    igUserId: { type: String },
+    igUsername: { type: String },
+    igAccessToken: { type: String, select: false }, // encrypted at rest
+    igTokenExpiresAt: { type: Date },
     name: { type: String },
+    profilePic: { type: String },
     followersCount: { type: Number, default: 0 },
     isConnected: { type: Boolean, default: false },
     scopes: [{ type: String }],
