@@ -6,6 +6,7 @@ export interface IDMJob extends Document {
   creatorId: string;
   igUserId: string;
   recipientId: string;
+  commentId?: string;
   message: string;
   attachmentUrl?: string;
   automationRuleId: string;
@@ -26,6 +27,7 @@ const DMJobSchema = new Schema<IDMJob>(
     creatorId: { type: String, required: true },
     igUserId: { type: String, required: true },
     recipientId: { type: String, required: true },
+    commentId: { type: String },
     message: { type: String, required: true },
     attachmentUrl: { type: String },
     automationRuleId: { type: String, required: true },

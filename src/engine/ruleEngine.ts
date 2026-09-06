@@ -5,6 +5,8 @@ import { DMLog } from '../models/DMLog';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { DMJob } from '../models/DMJob';
 import { logger } from '../utils/logger';
+import { decryptToken } from '../modules/oauth/instagram';
+import { publicReplyToComment } from '../lib/instagram';
 import crypto from 'crypto';
 
 interface CommentEvent {
@@ -54,7 +56,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     const entryId = entry.id;
     const query = { igUserId: entryId, isConnected: true };
 
-    const creatorAccount = await CreatorAccount.findOne(query);
+    const creatorAccount = await CreatorAccount.findOne(query).select('+igAccessToken');
     if (!creatorAccount) continue;
 
     const creatorId = creatorAccount.userId.toString();
@@ -72,7 +74,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
               id: commentData.id || '',
               media: mediaId ? { id: mediaId } : undefined,
             };
-            await handleComment(creatorId, creatorAccount.igUserId!, comment);
+            await handleComment(creatorId, creatorAccount.igUserId!, comment, creatorAccount.igAccessToken);
           }
         }
       }
@@ -88,7 +90,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
   }
 }
 
-async function handleComment(creatorId: string, igUserId: string, comment: CommentEvent): Promise<void> {
+async function handleComment(creatorId: string, igUserId: string, comment: CommentEvent, encryptedAccessToken?: string): Promise<void> {
   await AnalyticsEvent.create({
     creatorId,
     eventType: 'comment_received',
@@ -114,6 +116,15 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     }
 
     logger.info(`✅ Rule ${rule._id} matched for comment from ${comment.from.id}`);
+
+    if (rule.publicReply?.enabled && rule.publicReply.message && comment.id && encryptedAccessToken) {
+      try {
+        await publicReplyToComment(comment.id, rule.publicReply.message, decryptToken(encryptedAccessToken));
+        logger.info(`✅ Public reply sent for comment ${comment.id}`);
+      } catch (publicReplyError: any) {
+        logger.error('Public Instagram comment reply failed', publicReplyError?.message || publicReplyError);
+      }
+    }
 
     const cooldownSince = new Date(Date.now() - 60 * 60 * 1000);
     const recentDM = await DMLog.exists({
@@ -159,6 +170,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       dmLogId: dmLog._id.toString(),
       creatorId, igUserId,
       recipientId: comment.from.id,
+      commentId: comment.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),

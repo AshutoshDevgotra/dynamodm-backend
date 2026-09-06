@@ -3,7 +3,7 @@ import { Automation } from '../models/AutomationRule';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { CreatorAccount } from '../models/CreatorAccount';
 import { decryptToken } from '../modules/oauth/instagram';
-import { sendDM } from '../lib/instagram';
+import { privateReplyToComment, sendDM } from '../lib/instagram';
 import { logger } from '../utils/logger';
 
 interface DMJobData {
@@ -11,6 +11,7 @@ interface DMJobData {
   creatorId: string;
   igUserId: string;
   recipientId: string;
+  commentId?: string;
   message: string;
   ctaLink?: string;
   attachmentUrl?: string;
@@ -18,7 +19,7 @@ interface DMJobData {
 }
 
 export async function sendInstagramDM(data: DMJobData): Promise<void> {
-  const { dmLogId, creatorId, igUserId, recipientId, message, ctaLink, automationRuleId } = data;
+  const { dmLogId, creatorId, igUserId, recipientId, commentId, message, ctaLink, automationRuleId } = data;
 
   logger.info(`📤 sendInstagramDM called`, {
     dmLogId, creatorId, igUserId, recipientId, automationRuleId,
@@ -44,7 +45,11 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   });
 
   try {
-    await sendDM(igUserId, recipientId, messageText, accessToken);
+    if (commentId) {
+      await privateReplyToComment(igUserId, commentId, messageText, accessToken);
+    } else {
+      await sendDM(igUserId, recipientId, messageText, accessToken);
+    }
 
     logger.info(`✅ DM sent successfully to ${recipientId}`);
 

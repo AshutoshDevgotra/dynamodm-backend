@@ -185,3 +185,20 @@ export async function privateReplyToComment(
     handleIGError(error, 'privateReplyToComment');
   }
 }
+
+export async function publicReplyToComment(
+  commentId: string,
+  message: string,
+  accessToken: string
+): Promise<{ id: string }> {
+  try {
+    const response = await axios.post(
+      `${INSTAGRAM_API}/${commentId}/replies`,
+      null,
+      { params: { message, access_token: accessToken } },
+    );
+    return response.data;
+  } catch (error) {
+    handleIGError(error, 'publicReplyToComment');
+  }
+}

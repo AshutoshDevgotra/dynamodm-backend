@@ -11,14 +11,117 @@ type IAutomationTrigger = {
   postId?: string;
 };
 type IAutomationFlowStep = IFlowStep;
+type IAutomationPublicReply = { enabled: boolean; message?: string };
 
 const router = Router();
 router.use(authenticate);
 
+const parseAutomationPayload = (body: any): { name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply } => {
+  const {
+    name,
+    keyword,
+    triggerType,
+    targetPosts,
+    ctaLink,
+    delaySeconds,
+    responseMessage,
+    trigger: triggerFromBody,
+    flow: flowFromBody,
+    sendPublicReply,
+    publicReplyMessage,
+  } = body;
+
+  if (!name) {
+    throw new AppError('Automation name is required.', 400);
+  }
+
+  if (triggerFromBody && flowFromBody) {
+    return {
+      name,
+      trigger: triggerFromBody,
+      flow: flowFromBody,
+      publicReply: { enabled: Boolean(sendPublicReply), message: publicReplyMessage || '' },
+    };
+  }
+
+  if (!triggerType) {
+    throw new AppError('triggerType is required (e.g. "comment", "dm", "story_reply", "keyword").', 400);
+  }
+
+  const triggerTypeUpper = (triggerType as string).toUpperCase() as IAutomationTrigger['type'];
+  const validTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'DM'];
+  if (!validTriggerTypes.includes(triggerTypeUpper)) {
+    throw new AppError(`Invalid triggerType "${triggerType}". Must be one of: comment, keyword, story_reply, dm.`, 400);
+  }
+
+  if ((triggerTypeUpper === 'COMMENT' || triggerTypeUpper === 'KEYWORD') && !keyword) {
+    throw new AppError(`keyword is required when triggerType is "${triggerType}".`, 400);
+  }
+
+  if (!responseMessage) {
+    throw new AppError('responseMessage is required.', 400);
+  }
+
+  const trigger: IAutomationTrigger = {
+    type: triggerTypeUpper,
+    keywords: keyword ? (Array.isArray(keyword) ? keyword : [keyword]) : [],
+    ...(targetPosts && Array.isArray(targetPosts) && targetPosts.length > 0
+      ? { postId: targetPosts[0] }
+      : {}),
+  };
+
+  let dmContent = responseMessage as string;
+  if (ctaLink) dmContent += `\n\n${ctaLink}`;
+
+  const flowSteps: IAutomationFlowStep[] = [];
+  const delay = typeof delaySeconds === 'number' ? delaySeconds : 0;
+  if (delay > 0) {
+    flowSteps.push({ step: 1, type: 'DELAY', delaySeconds: delay });
+  }
+
+  flowSteps.push({
+    step: flowSteps.length + 1,
+    type: 'SEND_DM',
+    content: dmContent,
+    ...(delay > 0 ? { delaySeconds: delay } : {}),
+  });
+
+  return {
+    name,
+    trigger,
+    flow: flowSteps,
+    publicReply: { enabled: Boolean(sendPublicReply), message: publicReplyMessage || '' },
+  };
+};
+
+const formatAutomation = (auto: any) => {
+  const doc = auto && auto.toObject ? auto.toObject() : auto;
+  if (!doc) return auto;
+  const sendDmStep = doc.flow?.find((s: any) => s.type === 'SEND_DM');
+  const delayStep = doc.flow?.find((s: any) => s.type === 'DELAY' || (s.delaySeconds && s.delaySeconds > 0));
+
+  return {
+    ...doc,
+    keywords: doc.trigger?.keywords || [],
+    triggerType: doc.trigger?.type?.toLowerCase() || 'comment',
+    targetPosts: doc.trigger?.postId ? [doc.trigger.postId] : [],
+    responseMessage: sendDmStep?.content || '',
+    delaySeconds: delayStep?.delaySeconds || 0,
+    sendPublicReply: Boolean(doc.publicReply?.enabled),
+    publicReplyMessage: doc.publicReply?.message || '',
+    matchType: 'contains',
+    stats: {
+      triggered: doc.stats?.triggeredCount ?? doc.stats?.triggered ?? 0,
+      dmsSent: doc.stats?.dmSentCount ?? doc.stats?.dmsSent ?? 0,
+      failed: doc.stats?.failed ?? 0,
+    },
+  };
+};
+
 // GET /api/automations
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const automations = await Automation.find({ creatorId: req.user!.id }).sort({ createdAt: -1 });
-  res.json({ success: true, data: { automations } });
+  res.json({ success: true, data: { automations: automations.map(formatAutomation) } });
 });
 
 // POST /api/automations
@@ -36,117 +139,37 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     throw new AppError(`Your ${subscription.plan} plan allows ${maxAutomations} automation(s). Upgrade to add more.`, 403);
   }
 
-  let trigger: IAutomationTrigger;
-  let flow: IAutomationFlowStep[];
-
-  const {
-    name,
-    // Flat frontend payload fields
-    keyword,
-    triggerType,
-    targetPosts,
-    cooldownMinutes,
-    ctaLink,
-    delaySeconds,
-    matchType,
-    publicReplyMessage,
-    responseMessage,
-    sendPublicReply,
-    // Legacy internal format (passed through as-is when present)
-    trigger: triggerFromBody,
-    flow: flowFromBody,
-  } = req.body;
-
-  if (!name) {
-    throw new AppError('Automation name is required.', 400);
-  }
-
-  if (triggerFromBody && flowFromBody) {
-    // ── Legacy internal format: { name, trigger, flow } ──────────────────────
-    trigger = triggerFromBody;
-    flow = flowFromBody;
-  } else {
-    // ── Current flat frontend format ─────────────────────────────────────────
-    if (!triggerType) {
-      throw new AppError('triggerType is required (e.g. "comment", "dm", "story_reply", "keyword").', 400);
-    }
-
-    const triggerTypeUpper = (triggerType as string).toUpperCase() as IAutomationTrigger['type'];
-    const validTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'DM'];
-    if (!validTriggerTypes.includes(triggerTypeUpper)) {
-      throw new AppError(`Invalid triggerType "${triggerType}". Must be one of: comment, keyword, story_reply, dm.`, 400);
-    }
-
-    // keyword is required for COMMENT and KEYWORD trigger types
-    if ((triggerTypeUpper === 'COMMENT' || triggerTypeUpper === 'KEYWORD') && !keyword) {
-      throw new AppError(`keyword is required when triggerType is "${triggerType}".`, 400);
-    }
-
-    if (!responseMessage) {
-      throw new AppError('responseMessage is required.', 400);
-    }
-
-    // Build trigger from flat fields
-    trigger = {
-      type: triggerTypeUpper,
-      keywords: keyword ? [keyword] : [],
-      ...(targetPosts && Array.isArray(targetPosts) && targetPosts.length > 0
-        ? { postId: targetPosts[0] }
-        : {}),
-    };
-
-    // Build the DM message content — append CTA link here so the engine
-    // delivers it in the message body (matches dmEngine.ts behaviour)
-    let dmContent = responseMessage as string;
-    if (ctaLink) dmContent += `\n\n${ctaLink}`;
-
-    // Build flow from flat fields
-    const flowSteps: IAutomationFlowStep[] = [];
-
-    // Optional delay step (placed before the DM send)
-    const delay = typeof delaySeconds === 'number' ? delaySeconds : 0;
-    if (delay > 0) {
-      flowSteps.push({ step: 1, type: 'DELAY', delaySeconds: delay });
-    }
-
-    flowSteps.push({
-      step: flowSteps.length + 1,
-      type: 'SEND_DM',
-      content: dmContent,
-      ...(delay > 0 ? { delaySeconds: delay } : {}),
-    });
-
-    flow = flowSteps;
-  }
+  const { name, trigger, flow, publicReply } = parseAutomationPayload(req.body);
 
   const automation = await Automation.create({
     creatorId: req.user!.id,
     name,
     trigger,
     flow,
+    publicReply,
   });
 
-  res.status(201).json({ success: true, data: { automation } });
+  res.status(201).json({ success: true, data: { automation: formatAutomation(automation) } });
 });
 
 // GET /api/automations/:id
 router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id });
   if (!automation) throw new AppError('Automation not found.', 404);
-  res.json({ success: true, data: { automation } });
+  res.json({ success: true, data: { automation: formatAutomation(automation) } });
 });
 
 // PUT /api/automations/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const { name, trigger, flow } = req.body;
+  const { name, trigger, flow, publicReply } = parseAutomationPayload(req.body);
 
   const automation = await Automation.findOneAndUpdate(
     { _id: req.params.id, creatorId: req.user!.id },
-    { name, trigger, flow },
+    { name, trigger, flow, publicReply },
     { new: true, runValidators: true }
   );
   if (!automation) throw new AppError('Automation not found.', 404);
-  res.json({ success: true, data: { automation } });
+  res.json({ success: true, data: { automation: formatAutomation(automation) } });
 });
 
 // PATCH /api/automations/:id/toggle

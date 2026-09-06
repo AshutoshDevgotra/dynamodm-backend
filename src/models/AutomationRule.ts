@@ -20,6 +20,10 @@ export interface IAutomation extends Document {
     postId?: string;
   };
   flow: IFlowStep[];
+  publicReply?: {
+    enabled: boolean;
+    message?: string;
+  };
   isActive: boolean;
   stats: {
     triggeredCount: number;
@@ -47,6 +51,10 @@ const AutomationSchema = new Schema<IAutomation>(
       fallbackAction: { type: String },
       delaySeconds: { type: Number }
     }],
+    publicReply: {
+      enabled: { type: Boolean, default: false },
+      message: { type: String },
+    },
     isActive: { type: Boolean, default: true },
     stats: {
       triggeredCount: { type: Number, default: 0 },
