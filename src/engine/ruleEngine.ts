@@ -174,7 +174,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
-      nextAttemptAt: new Date(Date.now() + (sendDmStep.delaySeconds || 0) * 1000),
+      nextAttemptAt: new Date(),
     });
 
     await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
@@ -255,7 +255,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
-        nextAttemptAt: new Date(Date.now() + (sendDmStep.delaySeconds || 0) * 1000),
+        nextAttemptAt: new Date(),
     });
 
       await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
