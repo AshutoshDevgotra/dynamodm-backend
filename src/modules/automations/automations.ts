@@ -62,6 +62,10 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     throw new AppError('responseMessage is required.', 400);
   }
 
+  if (sendPublicReply && !publicReplyMessage?.trim()) {
+    throw new AppError('publicReplyMessage is required when public replies are enabled.', 400);
+  }
+
   const trigger: IAutomationTrigger = {
     type: triggerTypeUpper,
     keywords: keyword ? (Array.isArray(keyword) ? keyword : [keyword]) : [],
