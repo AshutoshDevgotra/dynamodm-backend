@@ -218,7 +218,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
             try {
               if (window.opener && window.opener !== window) {
                 window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
-                window.close();
+                setTimeout(function() { window.close(); }, 250);
               } else {
                 window.location.replace(${dashboardUrl});
               }
