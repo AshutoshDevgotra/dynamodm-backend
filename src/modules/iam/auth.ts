@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import mongoose from 'mongoose';
+
 
 import { User, IUser } from '../../models/User';
 import { Subscription } from '../../models/Subscription';
@@ -28,9 +28,17 @@ const normalizeRegistration = (body: Record<string, unknown>) => {
 };
 
 const safeUser = (user: IUser) => ({ id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar });
+const createOtp = () => String(crypto.randomInt(100000, 1000000));
+const hashOtp = (otp: string) => crypto.createHash('sha256').update(otp).digest('hex');
+const sendOtpEmail = async (to: string, otp: string, purpose: 'verify' | 'reset') => {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.EMAIL_FROM) throw new AppError('Email delivery is not configured.', 503);
+  const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+  const label = purpose === 'verify' ? 'verification' : 'password reset';
+  await transporter.sendMail({ from: process.env.EMAIL_FROM, to, subject: `DynamoDM ${label} code`, text: `Your DynamoDM ${label} code is ${otp}. It expires in 10 minutes.`, html: `<p>Your DynamoDM ${label} code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>` });
+};
 
 const createSignupRecords = async (data: { name: string; email: string; password?: string; role: 'CREATOR' | 'BRAND'; googleId?: string; avatar?: string }) => {
-  const user = await User.create({ ...data, isVerified: true });
+  const user = await User.create({ ...data, isVerified: Boolean(data.googleId) });
   await Subscription.create({ userId: user._id, plan: 'free' });
   if (data.role === 'BRAND') {
     const domain = data.email.split('@')[1];
@@ -47,8 +55,12 @@ router.post('/register', authLimiter, async (req: Request, res: Response): Promi
   const data = normalizeRegistration(req.body);
   try {
     const user = await createSignupRecords(data);
-    const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-    res.status(201).json({ success: true, message: 'Account created successfully.', data: { token, user: safeUser(user) } });
+    const otp = createOtp();
+    user.verificationCodeHash = hashOtp(otp);
+    user.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+    await sendOtpEmail(user.email, otp, 'verify');
+    res.status(201).json({ success: true, message: 'Verification code sent to your email.', data: { requiresVerification: true, email: user.email } });
   } catch (error: any) {
     if (error?.code === 11000) throw new AppError('Email already registered.', 409);
     throw error;
@@ -56,64 +68,68 @@ router.post('/register', authLimiter, async (req: Request, res: Response): Promi
 });
 
 router.post('/login', authLimiter, async (req: Request, res: Response): Promise<void> => {
-  let step = 'entry';
-  try {
-    // #region agent log
-    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'E',location:'auth.ts:login:entry',message:'login hit',data:{mongoState:mongoose.connection.readyState,bodyType:typeof req.body,hasBody:!!req.body,keys:req.body?Object.keys(req.body):[],emailType:typeof req.body?.email,passwordLen:typeof req.body?.password==='string'?req.body.password.length:null,jwtExpiresIn:process.env.JWT_EXPIRES_IN||null,jwtSecretLen:(process.env.JWT_SECRET||'').length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const password = typeof req.body.password === 'string' ? req.body.password : '';
-    if (!email || !password) throw new AppError('Email and password are required.', 400);
-    step = 'findUser';
-    const user = await User.findOne({ email }).select('+password');
-    // #region agent log
-    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'B',location:'auth.ts:login:findUser',message:'user lookup result',data:{found:!!user,hasPassword:!!user?.password,hashPrefix:typeof user?.password==='string'?user.password.slice(0,4):null,hasCompare:typeof user?.comparePassword,isActive:user?.isActive,role:user?.role||null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    if (!user || !user.password) throw new AppError('Invalid credentials.', 401);
-    if (!user.isActive) throw new AppError('Account suspended. Contact support.', 403);
-    step = 'comparePassword';
-    const passwordMatch = await user.comparePassword(password);
-    // #region agent log
-    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'C',location:'auth.ts:login:compare',message:'password compare finished',data:{passwordMatch},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    if (!passwordMatch) throw new AppError('Invalid credentials.', 401);
-    step = 'generateToken';
-    const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-    // #region agent log
-    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'A',location:'auth.ts:login:token',message:'token generated',data:{tokenLen:token.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    res.json({ success: true, data: { token, user: safeUser(user) } });
-  } catch (error: any) {
-    // #region agent log
-    fetch('http://127.0.0.1:7811/ingest/f30bae55-2bf1-4e72-b7d4-c3f427538ba8',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5bf7a1'},body:JSON.stringify({sessionId:'5bf7a1',runId:'pre-fix',hypothesisId:'A',location:'auth.ts:login:catch',message:'login threw',data:{step,name:error?.name,errMessage:error?.message,status:error?.status,statusCode:error?.statusCode,isOperational:error?.isOperational},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    throw error;
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
+  if (!email || !password) throw new AppError('Email and password are required.', 400);
+
+  const user = await User.findOne({ email }).select('+password');
+  if (!user || !user.password) throw new AppError('Invalid credentials.', 401);
+  if (!user.isActive) throw new AppError('Account suspended. Contact support.', 403);
+  if (!user.isVerified) throw new AppError('Please verify your email before logging in.', 403);
+
+  const passwordMatch = await user.comparePassword(password);
+  if (!passwordMatch) throw new AppError('Invalid credentials.', 401);
+
+  const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
+  res.json({ success: true, data: { token, user: safeUser(user) } });
+});
+
+router.post('/verify-email', authLimiter, async (req: Request, res: Response): Promise<void> => {
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
+  if (!email || !/^\d{6}$/.test(code)) throw new AppError('Email and a 6-digit code are required.', 400);
+  const user = await User.findOne({ email }).select('+verificationCodeHash +verificationCodeExpiry +password');
+  if (!user || !user.verificationCodeHash || !user.verificationCodeExpiry || user.verificationCodeExpiry.getTime() < Date.now() || hashOtp(code) !== user.verificationCodeHash) throw new AppError('Invalid or expired verification code.', 400);
+  user.isVerified = true;
+  user.verificationCodeHash = undefined;
+  user.verificationCodeExpiry = undefined;
+  await user.save({ validateBeforeSave: false });
+  const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
+  res.json({ success: true, message: 'Email verified successfully.', data: { token, user: safeUser(user) } });
+});
+
+router.post('/resend-verification', authLimiter, async (req: Request, res: Response): Promise<void> => {
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const user = await User.findOne({ email });
+  if (user && !user.isVerified) {
+    const otp = createOtp();
+    user.verificationCodeHash = hashOtp(otp);
+    user.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+    await sendOtpEmail(user.email, otp, 'verify');
   }
+  res.json({ success: true, message: 'If the account needs verification, a new code has been sent.' });
 });
 
 router.post('/forgot-password', authLimiter, async (req: Request, res: Response): Promise<void> => {
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const user = await User.findOne({ email });
-  if (!user) { res.json({ success: true, message: 'If that email is registered, a reset link has been sent.' }); return; }
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.EMAIL_FROM) {
-    throw new AppError('Password reset email is not configured.', 503);
-  }
-  const token = crypto.randomBytes(32).toString('hex');
-  user.resetPasswordToken = crypto.createHash('sha256').update(token).digest('hex');
-  user.resetPasswordExpiry = new Date(Date.now() + 30 * 60 * 1000);
+  if (!user) { res.json({ success: true, message: 'If that email is registered, a reset code has been sent.' }); return; }
+  const otp = createOtp();
+  user.resetPasswordToken = hashOtp(otp);
+  user.resetPasswordExpiry = new Date(Date.now() + 10 * 60 * 1000);
   await user.save({ validateBeforeSave: false });
-  const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-  const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
-  await transporter.sendMail({ from: process.env.EMAIL_FROM, to: user.email, subject: 'DynamoDM — Password Reset', html: `<p>Click to reset your password: <a href="${resetUrl}">${resetUrl}</a></p><p>Expires in 30 minutes.</p>` });
-  res.json({ success: true, message: 'If that email is registered, a reset link has been sent.' });
+  await sendOtpEmail(user.email, otp, 'reset');
+  res.json({ success: true, message: 'If that email is registered, a reset code has been sent.' });
 });
 
 router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
-  const { token, password } = req.body;
-  if (!token || typeof password !== 'string' || password.length < 8) throw new AppError('Token and a password of at least 8 characters are required.', 400);
-  const hashed = crypto.createHash('sha256').update(token).digest('hex');
-  const user = await User.findOne({ resetPasswordToken: hashed, resetPasswordExpiry: { $gt: Date.now() } }).select('+resetPasswordToken +resetPasswordExpiry +password');
-  if (!user) throw new AppError('Invalid or expired reset token.', 400);
+  const { token, code, email, password } = req.body;
+  const resetCode = typeof code === 'string' ? code : token;
+  if (!resetCode || typeof password !== 'string' || password.length < 8) throw new AppError('Email, code, and a password of at least 8 characters are required.', 400);
+  const hashed = hashOtp(resetCode);
+  const user = await User.findOne({ ...(email ? { email: String(email).trim().toLowerCase() } : {}), resetPasswordToken: hashed, resetPasswordExpiry: { $gt: Date.now() } }).select('+resetPasswordToken +resetPasswordExpiry +password');
+  if (!user) throw new AppError('Invalid or expired reset code.', 400);
   user.password = password; user.resetPasswordToken = undefined; user.resetPasswordExpiry = undefined; await user.save();
   res.json({ success: true, message: 'Password reset successfully.' });
 });
@@ -156,7 +172,12 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   await connectDB();
   const existingUser = await User.findOne({ $or: [{ googleId: profile.id }, { email: profile.email.toLowerCase() }] });
   const user = existingUser || await createSignupRecords({ name: profile.name, email: profile.email.toLowerCase(), googleId: profile.id, avatar: profile.picture, role: 'CREATOR' });
-  if (existingUser && !existingUser.googleId) { existingUser.googleId = profile.id; if (!existingUser.avatar) existingUser.avatar = profile.picture; await existingUser.save({ validateBeforeSave: false }); }
+  if (existingUser && (!existingUser.googleId || !existingUser.isVerified)) {
+    existingUser.googleId = existingUser.googleId || profile.id;
+    existingUser.isVerified = true;
+    if (!existingUser.avatar) existingUser.avatar = profile.picture;
+    await existingUser.save({ validateBeforeSave: false });
+  }
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
 

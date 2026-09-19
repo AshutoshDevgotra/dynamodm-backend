@@ -8,7 +8,8 @@ export type AuthRequest = any;
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : req.cookies?.token;
+    const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.cookies?.token || queryToken);
 
     if (!token) {
       res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
@@ -51,7 +52,9 @@ export const requireSubscription = async (req: AuthRequest, res: Response, next:
 
 export const requireRole = (...roles: string[]) =>
   (req: AuthRequest, res: Response, next: NextFunction): void => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    const userRole = req.user?.role?.toUpperCase();
+    const normalizedRoles = roles.map((r) => r.toUpperCase());
+    if (!userRole || !normalizedRoles.includes(userRole)) {
       res.status(403).json({ success: false, message: 'Insufficient permissions.' });
       return;
     }

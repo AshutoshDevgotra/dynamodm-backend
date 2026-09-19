@@ -40,7 +40,10 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
       name,
       trigger: triggerFromBody,
       flow: flowFromBody,
-      publicReply: { enabled: Boolean(sendPublicReply), message: publicReplyMessage || '' },
+      publicReply: {
+        enabled: Boolean(body.publicReply?.enabled ?? sendPublicReply),
+        message: String(body.publicReply?.message ?? publicReplyMessage ?? '').trim(),
+      },
     };
   }
 
@@ -62,7 +65,9 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     throw new AppError('responseMessage is required.', 400);
   }
 
-  if (sendPublicReply && !publicReplyMessage?.trim()) {
+  const publicReplyEnabled = Boolean(body.publicReply?.enabled ?? sendPublicReply);
+  const publicReplyText = String(body.publicReply?.message ?? publicReplyMessage ?? (triggerTypeUpper === 'COMMENT' ? 'Check your DM. Link has been sent.' : '')).trim();
+  if (publicReplyEnabled && !publicReplyText) {
     throw new AppError('publicReplyMessage is required when public replies are enabled.', 400);
   }
 
@@ -94,7 +99,7 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     name,
     trigger,
     flow: flowSteps,
-    publicReply: { enabled: Boolean(sendPublicReply), message: publicReplyMessage || '' },
+    publicReply: { enabled: publicReplyEnabled, message: publicReplyText },
   };
 };
 

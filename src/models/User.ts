@@ -14,6 +14,8 @@ export interface IUser extends Document {
   status: 'ACTIVE' | 'BANNED' | 'PENDING';
   resetPasswordToken?: string;
   resetPasswordExpiry?: Date;
+  verificationCodeHash?: string;
+  verificationCodeExpiry?: Date;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -32,6 +34,8 @@ const UserSchema = new Schema<IUser>(
     isActive: { type: Boolean, default: true },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpiry: { type: Date, select: false },
+    verificationCodeHash: { type: String, select: false },
+    verificationCodeExpiry: { type: Date, select: false },
   },
   { timestamps: true }
 );

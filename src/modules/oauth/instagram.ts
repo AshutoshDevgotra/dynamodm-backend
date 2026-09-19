@@ -56,16 +56,62 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
 }
 
 router.get('/login', authenticate, (req: AuthRequest, res: Response): void => {
-  const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
+  const token = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7)
+    : req.cookies?.token || (typeof req.query.token === 'string' ? req.query.token : '');
+  if (!token) throw new AppError('A valid session is required to connect Instagram.', 401);
+  const redirectUri = process.env.INSTAGRAM_REDIRECT_URI?.trim();
+  if (!redirectUri) throw new AppError('INSTAGRAM_REDIRECT_URI is not configured.', 503);
+  logger.info('Starting Instagram OAuth flow', { redirectUri });
   const params = new URLSearchParams({
     client_id: process.env.INSTAGRAM_APP_ID as string,
-    redirect_uri: process.env.INSTAGRAM_REDIRECT_URI as string,
+    redirect_uri: redirectUri,
     scope: REQUIRED_SCOPES.join(','),
     response_type: 'code',
     state: token,
   });
 
   res.json({ success: true, data: { authUrl: `https://www.instagram.com/oauth/authorize?${params}` } });
+});
+
+router.get('/profile/lookup', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const raw = typeof req.query.handle === 'string' ? req.query.handle : typeof req.query.url === 'string' ? req.query.url : '';
+  const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
+  const username = raw.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/^@/, '').split(/[/?#]/)[0].trim().toLowerCase();
+  if (!requestedUserId && (!username || !/^[a-z0-9._]{1,30}$/.test(username))) throw new AppError('Enter a valid Instagram handle, profile URL, or numeric user ID.', 400);
+  if (requestedUserId && !/^\d{5,30}$/.test(requestedUserId)) throw new AppError('Instagram user ID must be numeric.', 400);
+
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
+  if (!account?.igAccessToken || !account.igUserId) throw new AppError('Connect an Instagram professional account before searching.', 409);
+  const accessToken = decryptToken(account.igAccessToken);
+  try {
+    let profile: any;
+    if (requestedUserId === account.igUserId || username === account.igUsername?.toLowerCase()) {
+      profile = await getProfile(account.igUserId, accessToken);
+    } else if (requestedUserId) {
+      const response = await axios.get(`https://graph.instagram.com/v23.0/${requestedUserId}`, {
+        params: {
+          fields: 'user_id,username,name,profile_picture_url,followers_count,media_count,biography,account_type',
+          access_token: accessToken,
+        },
+      });
+      profile = response.data;
+    } else {
+      const response = await axios.get(`https://graph.facebook.com/v23.0/${account.igUserId}`, {
+        params: {
+          fields: `business_discovery.username(${username}){username,name,profile_picture_url,followers_count,media_count,biography}`,
+          access_token: accessToken,
+        },
+      });
+      profile = response.data?.business_discovery;
+    }
+    if (!profile) throw new AppError('Instagram profile was not found or is not available through Meta.', 404);
+    res.json({ success: true, data: { profile: { ...profile, userId: profile.user_id || profile.id || requestedUserId, webUrl: profile.username ? `https://www.instagram.com/${profile.username}/` : null, isCurrentAccount: (profile.user_id || profile.id) === account.igUserId || profile.username?.toLowerCase() === account.igUsername?.toLowerCase() } } });
+  } catch (error: any) {
+    if (error instanceof AppError) throw error;
+    logger.error('Instagram profile lookup failed:', error?.response?.data || error?.message || error);
+    throw new AppError(error?.response?.data?.error?.message || 'Unable to search Instagram through Meta.', 502);
+  }
 });
 
 router.get('/callback', async (req: Request, res: Response): Promise<void> => {
@@ -155,7 +201,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
     logger.info(`✅ OAuth complete for IG user ${igUserId}`);
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const profileUrl = `https://www.instagram.com/${igProfile.username}/`;
+    const safeFrontendUrl = JSON.stringify(frontendUrl);
+    const successMessage = JSON.stringify({ type: 'INSTAGRAM_AUTH_SUCCESS', username: igProfile.username, profileUrl });
+    const dashboardUrl = JSON.stringify(`${frontendUrl}/dashboard?connected=${encodeURIComponent(igProfile.username)}`);
     const html = `
       <html>
         <head><title>Connecting...</title></head>
@@ -166,11 +216,13 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
           </div>
           <script>
             try {
-              if (window.opener) {
-                window.opener.postMessage({ type: 'INSTAGRAM_AUTH_SUCCESS', username: '${igProfile.username}' }, '${frontendUrl}');
+              if (window.opener && window.opener !== window) {
+                window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
+                window.close();
+              } else {
+                window.location.replace(${dashboardUrl});
               }
             } catch(e) {}
-            setTimeout(function() { window.close(); }, 800);
           </script>
         </body>
       </html>
@@ -199,7 +251,10 @@ router.get('/status', authenticate, async (req: AuthRequest, res: Response): Pro
     }
   }
   const accountData = account?.toObject() as Record<string, unknown> | undefined;
-  if (accountData) delete accountData.igAccessToken;
+  if (accountData) {
+    delete accountData.igAccessToken;
+    if (accountData.igUsername) accountData.webUrl = `https://www.instagram.com/${accountData.igUsername}/`;
+  }
   res.json({
     success: true,
     data: {

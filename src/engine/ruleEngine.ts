@@ -117,6 +117,12 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
 
     logger.info(`✅ Rule ${rule._id} matched for comment from ${comment.from.id}`);
 
+    const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${comment.id}`).digest('hex');
+    if (comment.id && await DMJob.exists({ jobId })) {
+      logger.info(`Skipping duplicate comment event ${comment.id}`);
+      continue;
+    }
+
     if (rule.publicReply?.enabled && rule.publicReply.message && comment.id && encryptedAccessToken) {
       try {
         await publicReplyToComment(comment.id, rule.publicReply.message, decryptToken(encryptedAccessToken));
@@ -164,7 +170,6 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       messageText: sendDmStep.content, status: 'queued',
     });
 
-    const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${comment.id}`).digest('hex');
     await DMJob.create({
       jobId,
       dmLogId: dmLog._id.toString(),
