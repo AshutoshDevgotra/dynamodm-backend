@@ -9,8 +9,7 @@ import { generateToken, authenticate, AuthRequest } from '../../middleware/auth'
 import { authLimiter } from '../../middleware/rateLimiter';
 import { AppError } from '../../middleware/errorHandler';
 import {
-  INSTAGRAM_AUTHORIZATION_URL,
-  INSTAGRAM_REQUIRED_SCOPES,
+  buildInstagramBusinessLoginUrl,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
 import { connectDB } from '../../config/database';
@@ -200,15 +199,11 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
 router.get('/instagram', (req: Request, res: Response): void => {
   const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
   const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
-  const params = new URLSearchParams({
-    client_id: process.env.INSTAGRAM_APP_ID as string,
-    redirect_uri: process.env.INSTAGRAM_REDIRECT_URI as string,
-    response_type: 'code',
-    scope: INSTAGRAM_REQUIRED_SCOPES.join(','),
+  res.redirect(buildInstagramBusinessLoginUrl({
+    clientId: process.env.INSTAGRAM_APP_ID as string,
+    redirectUri: process.env.INSTAGRAM_REDIRECT_URI as string,
     state,
-    force_reauth: 'true',
-  });
-  res.redirect(`${INSTAGRAM_AUTHORIZATION_URL}?${params}`);
+  }));
 });
 
 router.get('/instagram/callback', async (req: Request, res: Response): Promise<void> => {

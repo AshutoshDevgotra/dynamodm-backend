@@ -13,7 +13,7 @@ import {
   getMedia,
 } from '../../lib/instagram';
 import {
-  INSTAGRAM_AUTHORIZATION_URL,
+  buildInstagramBusinessLoginUrl,
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
@@ -62,17 +62,13 @@ router.get('/login', authenticate, (req: AuthRequest, res: Response): void => {
   const redirectUri = process.env.INSTAGRAM_REDIRECT_URI?.trim();
   if (!redirectUri) throw new AppError('INSTAGRAM_REDIRECT_URI is not configured.', 503);
   logger.info('Starting Instagram OAuth flow', { redirectUri });
-  const params = new URLSearchParams({
-    client_id: process.env.INSTAGRAM_APP_ID as string,
-    redirect_uri: redirectUri,
-    scope: INSTAGRAM_REQUIRED_SCOPES.join(','),
-    response_type: 'code',
+  const authUrl = buildInstagramBusinessLoginUrl({
+    clientId: process.env.INSTAGRAM_APP_ID as string,
+    redirectUri,
     state: token,
-    // Re-show Instagram's consent screen so users can review every requested scope.
-    force_reauth: 'true',
   });
 
-  res.json({ success: true, data: { authUrl: `${INSTAGRAM_AUTHORIZATION_URL}?${params}` } });
+  res.json({ success: true, data: { authUrl } });
 });
 
 router.get('/profile/lookup', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
