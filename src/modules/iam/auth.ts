@@ -13,7 +13,7 @@ import {
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
 import { connectDB } from '../../config/database';
-import nodemailer from 'nodemailer';
+import { sendOtpEmail } from '../../lib/email';
 
 const router = Router();
 const publicEmailDomains = new Set(['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'aol.com']);
@@ -34,12 +34,6 @@ const normalizeRegistration = (body: Record<string, unknown>) => {
 const safeUser = (user: IUser) => ({ id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar });
 const createOtp = () => String(crypto.randomInt(100000, 1000000));
 const hashOtp = (otp: string) => crypto.createHash('sha256').update(otp).digest('hex');
-const sendOtpEmail = async (to: string, otp: string, purpose: 'verify' | 'reset') => {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.EMAIL_FROM) throw new AppError('Email delivery is not configured.', 503);
-  const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-  const label = purpose === 'verify' ? 'verification' : 'password reset';
-  await transporter.sendMail({ from: process.env.EMAIL_FROM, to, subject: `DynamoDM ${label} code`, text: `Your DynamoDM ${label} code is ${otp}. It expires in 10 minutes.`, html: `<p>Your DynamoDM ${label} code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>` });
-};
 
 const createSignupRecords = async (data: { name: string; email: string; password?: string; role: 'CREATOR' | 'BRAND'; googleId?: string; avatar?: string }) => {
   const user = await User.create({ ...data, isVerified: Boolean(data.googleId) });
