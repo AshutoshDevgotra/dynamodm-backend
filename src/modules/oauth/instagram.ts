@@ -12,6 +12,10 @@ import {
   getProfile,
   getMedia,
 } from '../../lib/instagram';
+import {
+  INSTAGRAM_AUTHORIZATION_URL,
+  INSTAGRAM_REQUIRED_SCOPES,
+} from '../../config/instagram';
 
 const router = Router();
 const INSTAGRAM_API = 'https://graph.instagram.com/v23.0';
@@ -39,12 +43,6 @@ export function decryptToken(encrypted: string): string {
   return decrypted;
 }
 
-const REQUIRED_SCOPES = [
-  'instagram_business_basic',
-  'instagram_business_manage_messages',
-  'instagram_business_manage_comments',
-];
-
 async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: string): Promise<void> {
   await axios.post(`${INSTAGRAM_API}/${instagramUserId}/subscribed_apps`, null, {
     params: {
@@ -66,12 +64,14 @@ router.get('/login', authenticate, (req: AuthRequest, res: Response): void => {
   const params = new URLSearchParams({
     client_id: process.env.INSTAGRAM_APP_ID as string,
     redirect_uri: redirectUri,
-    scope: REQUIRED_SCOPES.join(','),
+    scope: INSTAGRAM_REQUIRED_SCOPES.join(','),
     response_type: 'code',
     state: token,
+    // Re-show Instagram's consent screen so users can review every requested scope.
+    force_reauth: 'true',
   });
 
-  res.json({ success: true, data: { authUrl: `https://www.instagram.com/oauth/authorize?${params}` } });
+  res.json({ success: true, data: { authUrl: `${INSTAGRAM_AUTHORIZATION_URL}?${params}` } });
 });
 
 router.get('/profile/lookup', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
@@ -184,7 +184,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       profilePic: igProfile.profile_picture_url,
       followersCount: igProfile.followers_count,
       isConnected: true,
-      scopes: REQUIRED_SCOPES,
+      scopes: [...INSTAGRAM_REQUIRED_SCOPES],
     };
 
     try {

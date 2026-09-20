@@ -8,6 +8,10 @@ import { Brand } from '../../models/Brand';
 import { generateToken, authenticate, AuthRequest } from '../../middleware/auth';
 import { authLimiter } from '../../middleware/rateLimiter';
 import { AppError } from '../../middleware/errorHandler';
+import {
+  INSTAGRAM_AUTHORIZATION_URL,
+  INSTAGRAM_REQUIRED_SCOPES,
+} from '../../config/instagram';
 import { connectDB } from '../../config/database';
 import nodemailer from 'nodemailer';
 
@@ -199,10 +203,11 @@ router.get('/instagram', (req: Request, res: Response): void => {
     client_id: process.env.INSTAGRAM_APP_ID as string,
     redirect_uri: process.env.INSTAGRAM_REDIRECT_URI as string,
     response_type: 'code',
-    scope: 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments',
-    state
+    scope: INSTAGRAM_REQUIRED_SCOPES.join(','),
+    state,
+    force_reauth: 'true',
   });
-  res.redirect(`https://www.instagram.com/oauth/authorize?${params}`);
+  res.redirect(`${INSTAGRAM_AUTHORIZATION_URL}?${params}`);
 });
 
 router.get('/instagram/callback', async (req: Request, res: Response): Promise<void> => {
