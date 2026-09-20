@@ -28,6 +28,8 @@ export function buildInstagramBusinessLoginUrl(params: {
     ...(params.state ? { state: params.state } : {}),
     // Force Instagram to show the authorization review for an existing grant.
     force_reauth: 'true',
+    // Keep this on Instagram Business Login instead of falling back to Facebook Login.
+    enable_fb_login: '0',
   });
 
   return `${INSTAGRAM_AUTHORIZATION_URL}?${query}`;
