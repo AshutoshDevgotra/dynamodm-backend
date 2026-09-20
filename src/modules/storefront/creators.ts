@@ -7,7 +7,7 @@ const router = Router();
 
 // GET /api/creators/datadeletion — Meta data deletion callback (must come before /:username)
 router.get('/datadeletion', (_req: Request, res: Response): void => {
-  res.json({ success: true, message: 'Data deletion instructions available at https://dynamodm-frontend.vercel.app/privacy' });
+  res.json({ success: true, message: 'Data deletion instructions available at https://automation.houseoforange.in/privacy' });
 });
 
 // GET /api/creators/:username

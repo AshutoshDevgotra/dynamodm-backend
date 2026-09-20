@@ -25,8 +25,8 @@ INSTAGRAM_APP_ID=<your_instagram_app_id>
 INSTAGRAM_APP_SECRET=<your_instagram_app_secret>
 INSTAGRAM_REDIRECT_URI=https://dynamodm-backend.onrender.com/api/instagram/callback
 WEBHOOK_VERIFY_TOKEN=<your_random_webhook_token>
-FRONTEND_URL=https://dynamodm-frontend.vercel.app
-CLIENT_URL=https://dynamodm-frontend.vercel.app
+FRONTEND_URL=https://automation.houseoforange.in
+CLIENT_URL=https://automation.houseoforange.in
 ENCRYPTION_KEY=<your_64_character_hex_key>
 MONGODB_URI=<your_mongodb_connection_string>
 REDIS_URL=<your_redis_url>
@@ -70,7 +70,7 @@ Add these variables:
 ```
 NEXT_PUBLIC_API_URL=https://dynamodm-backend.onrender.com
 NEXT_PUBLIC_INSTAGRAM_APP_ID=<your_instagram_app_id>
-NEXT_PUBLIC_FRONTEND_URL=https://dynamodm-frontend.vercel.app
+NEXT_PUBLIC_FRONTEND_URL=https://automation.houseoforange.in
 ```
 
 ### 3. Verify Frontend is Live

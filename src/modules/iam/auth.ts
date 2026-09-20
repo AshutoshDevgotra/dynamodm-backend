@@ -12,6 +12,7 @@ import {
   INSTAGRAM_AUTHORIZATION_URL,
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
+import { getFrontendUrl } from '../../config/frontend';
 import { connectDB } from '../../config/database';
 import nodemailer from 'nodemailer';
 
@@ -183,7 +184,7 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
     await existingUser.save({ validateBeforeSave: false });
   }
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-  const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
+  const clientUrl = getFrontendUrl();
 
   let planRedirect = '';
   try {
@@ -228,7 +229,7 @@ router.get('/instagram/callback', async (req: Request, res: Response): Promise<v
     });
     if (!tokenRes.ok) throw new AppError('Instagram authentication failed.', 401);
     const tokenData = await tokenRes.json() as { access_token: string; user_id: string };
-    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000';
+    const clientUrl = getFrontendUrl();
 
     let planRedirect = '';
     try {

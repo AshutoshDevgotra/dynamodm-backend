@@ -22,6 +22,7 @@ import discoveryRoutes from './modules/campaigns/discovery';
 import aiMatchingRoutes from './modules/campaigns/aiMatching';
 import brandCampaignsRoutes from './modules/campaigns/brandCampaigns';
 import paymentRoutes from './modules/payments/razorpay';
+import { CANONICAL_FRONTEND_URL } from './config/frontend';
 
 const app = express();
 
@@ -35,6 +36,10 @@ const frontendOrigins = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
   .flatMap((origin) => origin.split(','))
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+if (process.env.NODE_ENV === 'production') {
+  frontendOrigins.push(CANONICAL_FRONTEND_URL);
+}
 
 if (process.env.NODE_ENV !== 'production') {
   frontendOrigins.push('http://localhost:3000', 'http://localhost:3001');

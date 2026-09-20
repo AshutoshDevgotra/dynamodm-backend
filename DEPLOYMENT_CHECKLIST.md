@@ -41,9 +41,9 @@ curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub
 ```
 INSTAGRAM_APP_ID=1058417440231558
 INSTAGRAM_APP_SECRET=02fd5228f3ecce473491b99baf9eac4b
-INSTAGRAM_REDIRECT_URI=https://dynamodm-frontend.vercel.app/api/instagram/callback
+INSTAGRAM_REDIRECT_URI=https://dynamodm-backend.onrender.com/api/instagram/callback
 WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
-FRONTEND_URL=https://dynamodm-frontend.vercel.app
+FRONTEND_URL=https://automation.houseoforange.in
 ENCRYPTION_KEY=<your_32_char_hex_key>
 ```
 
@@ -81,7 +81,7 @@ Go to: https://developers.facebook.com/apps/1065638836355573/settings/basic
 
 **Valid OAuth Redirect URIs:**
 ```
-https://dynamodm-frontend.vercel.app/api/instagram/callback
+https://dynamodm-backend.onrender.com/api/instagram/callback
 ```
 
 Save changes.
@@ -117,7 +117,7 @@ If any are red, check logs and error messages.
 
 ### Step 7: Test Real OAuth Flow
 
-1. Go to frontend: https://dynamodm-frontend.vercel.app
+1. Go to frontend: https://automation.houseoforange.in
 2. Click "Connect Instagram"
 3. Should redirect to Instagram login
 4. After approval, should redirect to dashboard with `?connected=algoadjusted`

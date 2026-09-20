@@ -16,6 +16,7 @@ import {
   INSTAGRAM_AUTHORIZATION_URL,
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
+import { getFrontendUrl } from '../../config/frontend';
 
 const router = Router();
 const INSTAGRAM_API = 'https://graph.instagram.com/v23.0';
@@ -201,7 +202,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
     logger.info(`✅ OAuth complete for IG user ${igUserId}`);
 
-    const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const frontendUrl = getFrontendUrl();
     const profileUrl = `https://www.instagram.com/${igProfile.username}/`;
     const safeFrontendUrl = JSON.stringify(frontendUrl);
     const successMessage = JSON.stringify({ type: 'INSTAGRAM_AUTH_SUCCESS', username: igProfile.username, profileUrl });
