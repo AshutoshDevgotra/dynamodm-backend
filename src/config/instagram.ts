@@ -8,30 +8,27 @@ export const INSTAGRAM_REQUIRED_SCOPES = [
   'instagram_business_manage_comments',
 ] as const;
 
-export const INSTAGRAM_BUSINESS_LOGIN_CONSENT_URL = 'https://www.instagram.com/consent/';
+export const INSTAGRAM_AUTHORIZATION_URL = 'https://www.instagram.com/oauth/authorize';
 
 /**
- * Build Instagram's Business Login consent URL. This is the permission-review
- * screen shown by the Instagram Business Login embed flow.
+ * Build Instagram's Business Login entry URL. Instagram may internally
+ * redirect this URL to /consent/?flow=ig_biz_login_oauth for the permission
+ * review screen; that internal URL must not be generated directly by us.
  */
 export function buildInstagramBusinessLoginUrl(params: {
   clientId: string;
   redirectUri: string;
   state?: string;
 }): string {
-  const oauthParams = {
+  const query = new URLSearchParams({
     client_id: params.clientId,
     redirect_uri: params.redirectUri,
     response_type: 'code',
     scope: INSTAGRAM_REQUIRED_SCOPES.join(','),
     ...(params.state ? { state: params.state } : {}),
-  };
-
-  const query = new URLSearchParams({
-    flow: 'ig_biz_login_oauth',
-    params_json: JSON.stringify(oauthParams),
-    source: 'oauth_permissions_page_www',
+    // Force Instagram to show the authorization review for an existing grant.
+    force_reauth: 'true',
   });
 
-  return `${INSTAGRAM_BUSINESS_LOGIN_CONSENT_URL}?${query}`;
+  return `${INSTAGRAM_AUTHORIZATION_URL}?${query}`;
 }

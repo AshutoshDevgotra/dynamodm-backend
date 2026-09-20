@@ -117,6 +117,7 @@ router.post('/resend-verification', authLimiter, async (req: Request, res: Respo
 
 router.post('/forgot-password', authLimiter, async (req: Request, res: Response): Promise<void> => {
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new AppError('Please provide a valid email address.', 400);
   const user = await User.findOne({ email });
   if (!user) { res.json({ success: true, message: 'If that email is registered, a reset code has been sent.' }); return; }
   const otp = createOtp();
@@ -127,12 +128,15 @@ router.post('/forgot-password', authLimiter, async (req: Request, res: Response)
   res.json({ success: true, message: 'If that email is registered, a reset code has been sent.' });
 });
 
-router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
-  const { token, code, email, password } = req.body;
-  const resetCode = typeof code === 'string' ? code : token;
-  if (!resetCode || typeof password !== 'string' || password.length < 8) throw new AppError('Email, code, and a password of at least 8 characters are required.', 400);
+router.post('/reset-password', authLimiter, async (req: Request, res: Response): Promise<void> => {
+  const { token, code, email: rawEmail, password, confirmPassword } = req.body;
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+  const resetCode = typeof code === 'string' ? code.trim() : typeof token === 'string' ? token.trim() : '';
+  if (!/^\S+@\S+\.\S+$/.test(email) || !/^\d{6}$/.test(resetCode)) throw new AppError('A valid email and 6-digit reset code are required.', 400);
+  if (typeof password !== 'string' || password.length < 8) throw new AppError('Password must be at least 8 characters.', 400);
+  if (typeof confirmPassword !== 'string' || password !== confirmPassword) throw new AppError('Passwords do not match.', 400);
   const hashed = hashOtp(resetCode);
-  const user = await User.findOne({ ...(email ? { email: String(email).trim().toLowerCase() } : {}), resetPasswordToken: hashed, resetPasswordExpiry: { $gt: Date.now() } }).select('+resetPasswordToken +resetPasswordExpiry +password');
+  const user = await User.findOne({ email, resetPasswordToken: hashed, resetPasswordExpiry: { $gt: Date.now() } }).select('+resetPasswordToken +resetPasswordExpiry +password');
   if (!user) throw new AppError('Invalid or expired reset code.', 400);
   user.password = password; user.resetPasswordToken = undefined; user.resetPasswordExpiry = undefined; await user.save();
   res.json({ success: true, message: 'Password reset successfully.' });
