@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { authenticate, requireRole } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, requireRole } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 
 const router = Router();
-router.use(authenticate, requireRole('brand'));
+router.use(authenticate, requirePaidSubscription, requireRole('brand'));
 
 // POST /api/discovery/ai-match
 // Uses Gemini to process a natural language search, converts to vector, and searches Atlas

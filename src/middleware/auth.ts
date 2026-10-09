@@ -50,6 +50,24 @@ export const requireSubscription = async (req: AuthRequest, res: Response, next:
   next();
 };
 
+export const requirePaidSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (req.user?.role?.toUpperCase() === 'ADMIN') { next(); return; }
+  const subscription = await Subscription.findOne({ userId: req.user!.id });
+  const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
+  const paid = subscription && ['pro', 'premium', 'enterprise'].includes(subscription.plan) && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
+  if (!paid) {
+    res.status(402).json({
+      success: false,
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: 'An active paid subscription is required to use this feature.',
+      data: { redirect: '/creator/payments/subscriptions' },
+    });
+    return;
+  }
+  req.subscription = subscription;
+  next();
+};
+
 export const requireRole = (...roles: string[]) =>
   (req: AuthRequest, res: Response, next: NextFunction): void => {
     const userRole = req.user?.role?.toUpperCase();

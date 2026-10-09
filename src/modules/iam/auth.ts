@@ -5,6 +5,18 @@ import crypto from 'crypto';
 import { User, IUser } from '../../models/User';
 import { Subscription } from '../../models/Subscription';
 import { Brand } from '../../models/Brand';
+import { CreatorAccount } from '../../models/CreatorAccount';
+import { Automation } from '../../models/AutomationRule';
+import { Campaign } from '../../models/Campaign';
+import { BrandCampaign } from '../../models/BrandCampaign';
+import { Lead } from '../../models/Lead';
+import { DMLog } from '../../models/DMLog';
+import { DMJob } from '../../models/DMJob';
+import { AnalyticsEvent } from '../../models/AnalyticsEvent';
+import { Link } from '../../models/Link';
+import { Product } from '../../models/Product';
+import { Payment } from '../../models/Payment';
+import { Transaction } from '../../models/Transaction';
 import { generateToken, authenticate, AuthRequest } from '../../middleware/auth';
 import { authLimiter } from '../../middleware/rateLimiter';
 import { AppError } from '../../middleware/errorHandler';
@@ -57,8 +69,9 @@ router.post('/register', authLimiter, async (req: Request, res: Response): Promi
     user.verificationCodeHash = hashOtp(otp);
     user.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
     await user.save({ validateBeforeSave: false });
-    await sendOtpEmail(user.email, otp, 'verify');
-    res.status(201).json({ success: true, message: 'Verification code sent to your email.', data: { requiresVerification: true, email: user.email } });
+    try { await sendOtpEmail(user.email, otp, 'verify'); } catch { /* Registration remains usable when email delivery is temporarily unavailable. */ }
+    const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
+    res.status(201).json({ success: true, data: { token, user: safeUser(user) } });
   } catch (error: any) {
     if (error?.code === 11000) throw new AppError('Email already registered.', 409);
     throw error;
@@ -140,7 +153,12 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
   const user = await User.findById(req.user!.id);
   if (!user) throw new AppError('User not found.', 404);
   const subscription = await Subscription.findOne({ userId: req.user!.id });
-  res.json({ success: true, data: { user: safeUser(user), subscription } });
+  const subscriptionData = subscription ? {
+    plan: subscription.plan,
+    status: subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now() && subscription.status === 'active' ? 'expired' : subscription.status,
+    currentPeriodEnd: subscription.currentPeriodEnd || null,
+  } : null;
+  res.json({ success: true, data: { user: safeUser(user), subscription: subscriptionData } });
 });
 
 router.put('/me', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
@@ -150,6 +168,51 @@ router.put('/me', authenticate, async (req: AuthRequest, res: Response): Promise
   const user = await User.findByIdAndUpdate(req.user!.id, updates, { new: true, runValidators: true });
   if (!user) throw new AppError('User not found.', 404);
   res.json({ success: true, data: { user: safeUser(user) } });
+});
+
+// Permanently delete the authenticated user's account and all data owned by it.
+// This is intentionally self-service: the user id always comes from the verified token.
+router.delete('/me', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const creatorAccount = await CreatorAccount.findOne({ userId }).select('_id');
+  const brand = await Brand.findOne({ userId }).select('_id');
+  const creatorAccountId = creatorAccount?._id;
+  const brandId = brand?._id;
+
+  // Remove records that contain the user's personal or account-specific data. Keep
+  // this list explicit so a newly-added model cannot be deleted accidentally.
+  await Promise.all([
+    Subscription.deleteMany({ userId }),
+    Payment.deleteMany({ userId }),
+    Brand.deleteMany({ userId }),
+    CreatorAccount.deleteMany({ userId }),
+    Campaign.deleteMany({ creatorId: userId }),
+    Lead.deleteMany({ creatorId: userId }),
+    DMLog.deleteMany({ creatorId: userId }),
+    AnalyticsEvent.deleteMany({ creatorId: userId }),
+    DMJob.deleteMany({ creatorId: userId }),
+    ...(creatorAccountId ? [
+      Automation.deleteMany({ creatorId: creatorAccountId }),
+      Link.deleteMany({ creatorId: creatorAccountId }),
+      Product.deleteMany({ creatorId: creatorAccountId }),
+      Transaction.deleteMany({ creatorId: creatorAccountId }),
+      // A creator's proposal is their account data; the brand campaign remains.
+      BrandCampaign.updateMany(
+        { 'proposals.creatorId': creatorAccountId },
+        { $pull: { proposals: { creatorId: creatorAccountId } } },
+      ),
+    ] : []),
+    ...(brandId ? [
+      BrandCampaign.deleteMany({ brandId }),
+      Transaction.deleteMany({ brandId }),
+    ] : []),
+  ]);
+
+  const deletedUser = await User.deleteOne({ _id: userId });
+  if (deletedUser.deletedCount !== 1) throw new AppError('User not found.', 404);
+
+  res.clearCookie('token');
+  res.status(204).send();
 });
 
 router.post('/logout', (_req: Request, res: Response): void => { res.clearCookie('token'); res.json({ success: true, message: 'Logged out successfully.' }); });

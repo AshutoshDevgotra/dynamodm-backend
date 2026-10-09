@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 import { decryptToken } from '../modules/oauth/instagram';
 import { publicReplyToComment } from '../lib/instagram';
 import crypto from 'crypto';
+import { assertUsageAvailable } from '../utils/usage';
 
 interface CommentEvent {
   from: { id: string; username?: string };
@@ -151,6 +152,9 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       continue;
     }
 
+    const existingLead = await Lead.exists({ creatorId, instagramUserId: comment.from.id });
+    if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
+    await assertUsageAvailable(creatorId, 'dms');
     const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: comment.from.id },
       {
@@ -233,6 +237,9 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       continue;
     }
 
+    const existingLead = await Lead.exists({ creatorId, instagramUserId: fromId });
+    if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
+    await assertUsageAvailable(creatorId, 'dms');
     const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: fromId },
       {

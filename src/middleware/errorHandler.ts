@@ -20,6 +20,7 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
 
   res.status(statusCode).json({
     success: false,
+    ...(err.code && typeof err.code === 'string' && err.code !== 'ERR_HTTP_HEADERS_SENT' ? { code: err.code } : {}),
     message,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });

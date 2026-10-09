@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, AuthRequest } from '../../middleware/auth';
 import { Automation, IFlowStep } from '../../models/AutomationRule';
 import { Subscription } from '../../models/Subscription';
 import { AppError } from '../../middleware/errorHandler';
+import { PLANS } from '../../config/plans';
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
@@ -14,7 +15,7 @@ type IAutomationFlowStep = IFlowStep;
 type IAutomationPublicReply = { enabled: boolean; message?: string };
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requirePaidSubscription);
 
 const parseAutomationPayload = (body: any): { name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply } => {
   const {
@@ -138,7 +139,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
 
   // Free tier: 1 automation max (no paid subscription)
-  const maxAutomations = subscription?.features?.maxAutomations ?? 1;
+  const maxAutomations = subscription ? PLANS[subscription.plan].automationLimit : 1;
   const count = await Automation.countDocuments({ creatorId: req.user!.id });
 
   if (maxAutomations !== -1 && count >= maxAutomations) {

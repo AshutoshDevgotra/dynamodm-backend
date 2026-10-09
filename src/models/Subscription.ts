@@ -1,7 +1,9 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export type SubscriptionPlan = 'free' | 'pro' | 'premium';
-export type SubscriptionStatus = 'active' | 'cancelled' | 'past_due' | 'trialing' | 'paused';
+import { PLANS, PlanId } from '../config/plans';
+
+export type SubscriptionPlan = PlanId;
+export type SubscriptionStatus = 'active' | 'cancelled' | 'expired' | 'past_due' | 'trialing' | 'paused';
 
 export interface ISubscription extends Document {
   userId: mongoose.Types.ObjectId;
@@ -10,6 +12,11 @@ export interface ISubscription extends Document {
   razorpaySubscriptionId?: string;
   razorpayCustomerId?: string;
   razorpayPlanId?: string;
+  provider: string;
+  providerOrderId?: string;
+  providerPaymentId?: string;
+  startedAt?: Date;
+  cancelledAt?: Date;
   currentPeriodStart?: Date;
   currentPeriodEnd?: Date;
   cancelAtPeriodEnd: boolean;
@@ -26,17 +33,16 @@ export interface ISubscription extends Document {
   updatedAt: Date;
 }
 
-const planFeatures = {
-  free: { maxAutomations: 1, maxLeads: 100, maxDmsPerMonth: 500, analyticsRetentionDays: 7, prioritySupport: false, customBranding: false },
-  pro: { maxAutomations: 10, maxLeads: 5000, maxDmsPerMonth: 10000, analyticsRetentionDays: 30, prioritySupport: false, customBranding: false },
-  premium: { maxAutomations: -1, maxLeads: -1, maxDmsPerMonth: -1, analyticsRetentionDays: 365, prioritySupport: true, customBranding: true },
-};
-
 const SubscriptionSchema = new Schema<ISubscription>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-    plan: { type: String, enum: ['free', 'pro', 'premium'], default: 'free' },
-    status: { type: String, enum: ['active', 'cancelled', 'past_due', 'trialing', 'paused'], default: 'active' },
+    plan: { type: String, enum: ['free', 'pro', 'premium', 'enterprise'], default: 'free' },
+    status: { type: String, enum: ['active', 'cancelled', 'expired', 'past_due', 'trialing', 'paused'], default: 'active' },
+    provider: { type: String, default: 'manual' },
+    providerOrderId: { type: String, index: true },
+    providerPaymentId: { type: String, index: true },
+    startedAt: { type: Date },
+    cancelledAt: { type: Date },
     razorpaySubscriptionId: { type: String },
     razorpayCustomerId: { type: String },
     razorpayPlanId: { type: String },
@@ -58,7 +64,15 @@ const SubscriptionSchema = new Schema<ISubscription>(
 
 SubscriptionSchema.pre('save', function (next) {
   if (this.isModified('plan')) {
-    this.features = planFeatures[this.plan];
+    const config = PLANS[this.plan];
+    this.features = {
+      maxAutomations: config.automationLimit,
+      maxLeads: config.leadsLimit,
+      maxDmsPerMonth: config.dmsLimit,
+      analyticsRetentionDays: config.analyticsRetentionDays,
+      prioritySupport: this.plan !== 'free',
+      customBranding: this.plan !== 'free',
+    };
   }
   next();
 });

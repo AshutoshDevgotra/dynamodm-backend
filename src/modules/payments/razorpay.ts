@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
-import { authenticate, AuthRequest, requireRole } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, AuthRequest, requireRole } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { BrandCampaign } from '../../models/BrandCampaign';
 import { Transaction } from '../../models/Transaction';
@@ -21,7 +21,7 @@ const getRazorpayInstance = () => {
 };
 
 // ─── POST /api/payments/onboard (Creator Linked Account) ──────────────────────
-router.post('/onboard', authenticate, requireRole('creator'), async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/onboard', authenticate, requirePaidSubscription, requireRole('creator'), async (req: AuthRequest, res: Response): Promise<void> => {
   const { name, email, phone } = req.body;
   
   const creator = await CreatorAccount.findOne({ userId: req.user!.id });

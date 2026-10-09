@@ -1,11 +1,11 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, requireRole, AuthRequest } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, requireRole, AuthRequest } from '../../middleware/auth';
 import { BrandCampaign } from '../../models/BrandCampaign';
 import { Brand } from '../../models/Brand';
 import { AppError } from '../../middleware/errorHandler';
 
 const router = Router();
-router.use(authenticate, requireRole('brand'));
+router.use(authenticate, requirePaidSubscription, requireRole('brand'));
 
 // POST /api/brand-campaigns
 // Create a new campaign

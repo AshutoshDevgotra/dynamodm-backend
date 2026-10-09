@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, requireRole } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, requireRole } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 
 const router = Router();
 
 // GET /api/discovery/creators
 // Search and filter creators for brand campaigns
-router.get('/creators', authenticate, requireRole('brand'), async (req: Request, res: Response): Promise<void> => {
+router.get('/creators', authenticate, requirePaidSubscription, requireRole('brand'), async (req: Request, res: Response): Promise<void> => {
   try {
     const { niche, minFollowers, maxFollowers, query, page = '1', limit = '20', minAgePercentage, targetAge, targetGender } = req.query;
 

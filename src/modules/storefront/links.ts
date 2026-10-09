@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, AuthRequest } from '../../middleware/auth';
+import { authenticate, requirePaidSubscription, AuthRequest } from '../../middleware/auth';
 import { Link } from '../../models/Link';
 import { Product } from '../../models/Product';
 import { AnalyticsEvent } from '../../models/AnalyticsEvent';
@@ -12,7 +12,7 @@ const router = Router();
 const generateShortCode = () => crypto.randomBytes(4).toString('hex');
 
 // POST /api/links/generate - Create a short link
-router.post('/generate', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/generate', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   const { originalUrl, productId, customCode } = req.body;
   
   if (!originalUrl) {
