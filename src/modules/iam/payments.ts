@@ -9,7 +9,7 @@ import { Brand } from '../../models/Brand';
 import { Transaction } from '../../models/Transaction';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
-import { PLANS } from '../../config/plans';
+import { CheckoutPlan, PLANS, paidPlans } from '../../config/plans';
 import { addOneMonth, verifyRazorpaySignature } from '../../utils/razorpay';
 
 const router = Router();
@@ -28,13 +28,35 @@ const getRazorpayInstance = (): Razorpay => {
 // Plan definitions — amounts in paise (INR × 100)
 // GET /api/payments/plans
 router.get('/plans', (_req: Request, res: Response): void => {
+  const planDetails = (id: keyof typeof PLANS, name: string) => ({
+    id,
+    name,
+    price: PLANS[id].monthlyPriceInr,
+    currency: 'INR',
+    interval: 'month',
+    limits: {
+      automations: PLANS[id].automationLimit,
+      leads: PLANS[id].leadsLimit,
+      dms: PLANS[id].dmsLimit,
+      analyticsRetentionDays: PLANS[id].analyticsRetentionDays,
+    },
+    features: [
+      `${PLANS[id].automationLimit === -1 ? 'Unlimited' : PLANS[id].automationLimit} Automations`,
+      `${PLANS[id].leadsLimit === -1 ? 'Unlimited' : PLANS[id].leadsLimit.toLocaleString('en-IN')} Leads`,
+      `${PLANS[id].dmsLimit === -1 ? 'Unlimited' : PLANS[id].dmsLimit.toLocaleString('en-IN')} DMs/month`,
+      `${PLANS[id].analyticsRetentionDays}-day analytics`,
+    ],
+    selfServeCheckout: PLANS[id].selfServeCheckout,
+  });
+
   res.json({
     success: true,
     data: {
       plans: [
-        { id: 'free', name: 'Free', price: 0, currency: 'INR', features: ['1 Automation', '100 Leads', '500 DMs/month'] },
-        { id: 'pro', name: 'Pro', price: PLANS.pro.monthlyPriceInr, currency: 'INR', features: ['10 Automations', '5,000 Leads', '10,000 DMs/month', '30-day analytics'] },
-        { id: 'premium', name: 'Premium', price: PLANS.premium.monthlyPriceInr, currency: 'INR', features: ['Unlimited Automations', 'Unlimited Leads', 'Unlimited DMs', '1-year analytics', 'Priority Support', 'Custom Branding'] },
+        planDetails('free', 'Free'),
+        planDetails('starter', 'Starter'),
+        planDetails('pro', 'Pro'),
+        planDetails('premium', 'Premium'),
       ],
     },
   });
@@ -61,8 +83,8 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
     res.json({ success: true, data: { orderId: campaignOrder.id, amount: campaignOrder.amount, currency: campaignOrder.currency } });
     return;
   }
-  const plan = req.body?.plan as 'pro' | 'premium';
-  if (!['pro', 'premium'].includes(plan)) throw new AppError('Invalid plan selected.', 400);
+  const plan = req.body?.plan as CheckoutPlan;
+  if (!paidPlans.includes(plan) || !PLANS[plan].selfServeCheckout) throw new AppError('Invalid plan selected.', 400);
   const planConfig = PLANS[plan];
   const amount = (planConfig.monthlyPriceInr as number) * 100;
   const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'] : undefined;
@@ -72,7 +94,7 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
   {
     const prior = await Payment.findOne(priorQuery);
     if (prior?.providerOrderId) {
-      res.json({ success: true, data: { orderId: prior.providerOrderId, amount: prior.amount, currency: prior.currency, keyId: process.env.RAZORPAY_KEY_ID, planName: plan === 'pro' ? 'Pro' : 'Premium' } });
+      res.json({ success: true, data: { orderId: prior.providerOrderId, amount: prior.amount, currency: prior.currency, keyId: process.env.RAZORPAY_KEY_ID, planName: plan[0].toUpperCase() + plan.slice(1) } });
       return;
     }
   }
@@ -100,7 +122,7 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
       amount,
       currency: 'INR',
       keyId: process.env.RAZORPAY_KEY_ID,
-      planName: plan === 'pro' ? 'Pro' : 'Premium',
+      planName: plan[0].toUpperCase() + plan.slice(1),
     },
   });
 });
@@ -133,7 +155,7 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
   const currentPeriodEnd = addOneMonth(now);
   const subscription = await Subscription.findOneAndUpdate(
     { userId: req.user!.id },
-    { userId: req.user!.id, plan: payment.plan, status: 'active', provider: 'razorpay', providerOrderId: razorpay_order_id, providerPaymentId: razorpay_payment_id, startedAt: now, currentPeriodStart: now, currentPeriodEnd, cancelledAt: null, features: { maxAutomations: PLANS[payment.plan].automationLimit, maxLeads: PLANS[payment.plan].leadsLimit, maxDmsPerMonth: PLANS[payment.plan].dmsLimit, analyticsRetentionDays: PLANS[payment.plan].analyticsRetentionDays, prioritySupport: payment.plan === 'premium', customBranding: payment.plan === 'premium' } },
+    { userId: req.user!.id, plan: payment.plan, status: 'active', provider: 'razorpay', providerOrderId: razorpay_order_id, providerPaymentId: razorpay_payment_id, startedAt: now, currentPeriodStart: now, currentPeriodEnd, cancelledAt: null, features: { maxAutomations: PLANS[payment.plan].automationLimit, maxLeads: PLANS[payment.plan].leadsLimit, maxDmsPerMonth: PLANS[payment.plan].dmsLimit, analyticsRetentionDays: PLANS[payment.plan].analyticsRetentionDays, prioritySupport: payment.plan !== 'starter', customBranding: payment.plan === 'premium' } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   payment.subscriptionId = subscription._id;

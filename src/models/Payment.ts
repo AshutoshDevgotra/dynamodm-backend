@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { CheckoutPlan } from '../config/plans';
 
 export interface IPayment extends Document {
   userId: mongoose.Types.ObjectId;
@@ -10,7 +11,7 @@ export interface IPayment extends Document {
   providerOrderId?: string;
   providerPaymentId?: string;
   idempotencyKey?: string;
-  plan: 'pro' | 'premium';
+  plan: CheckoutPlan;
   amount: number; // in paise
   currency: string;
   status: 'created' | 'authorized' | 'captured' | 'refunded' | 'failed';
@@ -32,7 +33,7 @@ const PaymentSchema = new Schema<IPayment>(
     providerOrderId: { type: String, index: true },
     providerPaymentId: { type: String, index: true, sparse: true },
     idempotencyKey: { type: String, index: true, sparse: true },
-    plan: { type: String, enum: ['pro', 'premium'], required: true },
+    plan: { type: String, enum: ['starter', 'pro', 'premium'], required: true },
     amount: { type: Number, required: true },
     currency: { type: String, default: 'INR' },
     status: {

@@ -54,12 +54,30 @@ export const requirePaidSubscription = async (req: AuthRequest, res: Response, n
   if (req.user?.role?.toUpperCase() === 'ADMIN') { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
-  const paid = subscription && ['pro', 'premium', 'enterprise'].includes(subscription.plan) && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
+  const paid = subscription && ['starter', 'pro', 'premium', 'enterprise'].includes(subscription.plan) && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
   if (!paid) {
     res.status(402).json({
       success: false,
       code: 'SUBSCRIPTION_REQUIRED',
       message: 'An active paid subscription is required to use this feature.',
+      data: { redirect: '/creator/payments/subscriptions' },
+    });
+    return;
+  }
+  req.subscription = subscription;
+  next();
+};
+
+/** Allows the active Free workspace as well as paid plans. */
+export const requireActiveSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  const subscription = await Subscription.findOne({ userId: req.user!.id });
+  const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
+  const active = subscription && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
+  if (!active) {
+    res.status(402).json({
+      success: false,
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: 'An active subscription is required to use this feature.',
       data: { redirect: '/creator/payments/subscriptions' },
     });
     return;

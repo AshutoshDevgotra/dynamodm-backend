@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, requirePaidSubscription, AuthRequest } from '../../middleware/auth';
+import { authenticate, requireActiveSubscription, AuthRequest } from '../../middleware/auth';
 import { Automation, IFlowStep } from '../../models/AutomationRule';
 import { Subscription } from '../../models/Subscription';
 import { AppError } from '../../middleware/errorHandler';
@@ -15,7 +15,7 @@ type IAutomationFlowStep = IFlowStep;
 type IAutomationPublicReply = { enabled: boolean; message?: string };
 
 const router = Router();
-router.use(authenticate, requirePaidSubscription);
+router.use(authenticate, requireActiveSubscription);
 
 const parseAutomationPayload = (body: any): { name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply } => {
   const {

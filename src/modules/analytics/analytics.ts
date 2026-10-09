@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { authenticate, requirePaidSubscription, AuthRequest } from '../../middleware/auth';
+import { authenticate, requireActiveSubscription, AuthRequest } from '../../middleware/auth';
 import { AnalyticsEvent } from '../../models/AnalyticsEvent';
 import { DMLog } from '../../models/DMLog';
 import { Lead } from '../../models/Lead';
 import { Automation } from '../../models/AutomationRule';
 
 const router = Router();
-router.use(authenticate, requirePaidSubscription);
+router.use(authenticate, requireActiveSubscription);
 
 // GET /api/analytics/summary
 router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> => {

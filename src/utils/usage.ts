@@ -8,13 +8,16 @@ type UsageKind = 'leads' | 'dms';
 
 export async function assertUsageAvailable(userId: string, kind: UsageKind): Promise<void> {
   const subscription = await Subscription.findOne({ userId, status: 'active' });
-  if (!subscription || !['pro', 'premium', 'enterprise'].includes(subscription.plan) || (subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now())) {
-    throw new AppError('An active paid subscription is required to use this feature.', 402);
+  if (!subscription || (subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now())) {
+    throw new AppError('An active subscription is required to use this feature.', 402);
   }
   const limit = kind === 'leads' ? PLANS[subscription.plan].leadsLimit : PLANS[subscription.plan].dmsLimit;
   if (limit === -1) return;
 
-  const periodStart = subscription.currentPeriodStart || subscription.startedAt || subscription.createdAt;
+  // Free usage resets monthly even though the free subscription has no paid billing period.
+  const periodStart = subscription.plan === 'free'
+    ? new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    : (subscription.currentPeriodStart || subscription.startedAt || subscription.createdAt);
   const query = { creatorId: userId, createdAt: { $gte: periodStart } };
   const used = kind === 'leads' ? await Lead.countDocuments(query) : await DMLog.countDocuments(query);
   if (used >= limit) {

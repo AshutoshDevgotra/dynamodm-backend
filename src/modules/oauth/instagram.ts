@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
 import mongoose from 'mongoose';
-import { authenticate, requirePaidSubscription, AuthRequest } from '../../middleware/auth';
+import { authenticate, requireActiveSubscription, AuthRequest } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -54,7 +54,7 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
   logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
 }
 
-router.get('/login', authenticate, requirePaidSubscription, (req: AuthRequest, res: Response): void => {
+ router.get('/login', authenticate, requireActiveSubscription, (req: AuthRequest, res: Response): void => {
   const token = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice(7)
     : req.cookies?.token || (typeof req.query.token === 'string' ? req.query.token : '');
@@ -71,7 +71,7 @@ router.get('/login', authenticate, requirePaidSubscription, (req: AuthRequest, r
   res.json({ success: true, data: { authUrl } });
 });
 
-router.get('/profile/lookup', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/profile/lookup', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   const raw = typeof req.query.handle === 'string' ? req.query.handle : typeof req.query.url === 'string' ? req.query.url : '';
   const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
   const username = raw.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/^@/, '').split(/[/?#]/)[0].trim().toLowerCase();
@@ -231,7 +231,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-router.get('/status', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/status', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+igAccessToken');
   if (account?.isConnected && account.igAccessToken && account.igUserId) {
     try {
@@ -261,7 +261,7 @@ router.get('/status', authenticate, requirePaidSubscription, async (req: AuthReq
   });
 });
 
-router.get('/posts', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/posts', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
     if (!account || !account.igAccessToken || !account.igUserId) {
@@ -289,7 +289,7 @@ router.get('/posts', authenticate, requirePaidSubscription, async (req: AuthRequ
   }
 });
 
-router.delete('/disconnect', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.delete('/disconnect', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   await CreatorAccount.findOneAndUpdate(
     { userId: req.user!.id },
     {
