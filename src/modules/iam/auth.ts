@@ -259,7 +259,8 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
     }
   } catch {}
 
-  res.redirect(`${clientUrl}/creator?token=${token}${planRedirect}`);
+  const destination = user.role === 'BRAND' ? '/brand/dashboard' : user.role === 'ADMIN' ? '/admin' : '/creator';
+  res.redirect(`${clientUrl}${destination}?token=${token}${planRedirect}`);
 });
 
 router.get('/instagram', (req: Request, res: Response): void => {
