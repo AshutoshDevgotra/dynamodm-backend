@@ -202,7 +202,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     const profileUrl = `https://www.instagram.com/${igProfile.username}/`;
     const safeFrontendUrl = JSON.stringify(frontendUrl);
     const successMessage = JSON.stringify({ type: 'INSTAGRAM_AUTH_SUCCESS', username: igProfile.username, profileUrl });
-    const dashboardUrl = JSON.stringify(`${frontendUrl}/dashboard?connected=${encodeURIComponent(igProfile.username)}`);
+    const dashboardUrl = JSON.stringify(`${frontendUrl}/creator/instagram?connected=${encodeURIComponent(igProfile.username)}`);
     const html = `
       <html>
         <head><title>Connecting...</title></head>
@@ -212,14 +212,20 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
             <p style="font-size:15px;color:#a78bfa">Instagram connected! Closing...</p>
           </div>
           <script>
-            try {
-              if (window.opener && window.opener !== window) {
-                window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
-                setTimeout(function() { window.close(); }, 250);
-              } else {
-                window.location.replace(${dashboardUrl});
-              }
-            } catch(e) {}
+            (function() {
+              try {
+                if (window.opener && window.opener !== window && !window.opener.closed) {
+                  window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
+                }
+              } catch(e) {}
+              try { window.close(); } catch(e) {}
+              setTimeout(function() {
+                try { window.close(); } catch(e) {}
+                if (!window.closed && (!window.opener || window.opener === window)) {
+                  window.location.replace(${dashboardUrl});
+                }
+              }, 500);
+            })();
           </script>
         </body>
       </html>
