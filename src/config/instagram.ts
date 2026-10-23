@@ -10,10 +10,12 @@ export const INSTAGRAM_REQUIRED_SCOPES = [
 
 export const INSTAGRAM_AUTHORIZATION_URL = 'https://www.instagram.com/oauth/authorize';
 
-export const getInstagramCallbackUrl = () => (
-  process.env.INSTAGRAM_REDIRECT_URI?.trim() ||
-  'https://api.v1.orangeflow.in/api/instagram/callback'
-);
+export const getInstagramCallbackUrl = () => {
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://api.v1.orangeflow.in/api/instagram/callback';
+  }
+  return process.env.INSTAGRAM_REDIRECT_URI?.trim() || 'http://localhost:5000/api/instagram/callback';
+};
 
 /**
  * Build Instagram's Business Login entry URL. Instagram may internally
