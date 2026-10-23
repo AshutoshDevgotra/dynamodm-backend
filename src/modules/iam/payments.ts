@@ -25,6 +25,22 @@ const getRazorpayInstance = (): Razorpay => {
   return new Razorpay({ key_id: keyId, key_secret: keySecret });
 };
 
+const activateCapturedSubscription = async (input: { userId: string; plan: CheckoutPlan; orderId: string; paymentId: string; signature?: string; amount: number; currency: string }) => {
+  const now = new Date();
+  const currentPeriodEnd = addOneMonth(now);
+  const subscription = await Subscription.findOneAndUpdate(
+    { userId: input.userId },
+    { userId: input.userId, plan: input.plan, status: 'active', provider: 'razorpay', providerOrderId: input.orderId, providerPaymentId: input.paymentId, startedAt: now, currentPeriodStart: now, currentPeriodEnd, cancelledAt: null, features: { maxAutomations: PLANS[input.plan].automationLimit, maxLeads: PLANS[input.plan].leadsLimit, maxDmsPerMonth: PLANS[input.plan].dmsLimit, analyticsRetentionDays: PLANS[input.plan].analyticsRetentionDays, prioritySupport: input.plan !== 'starter', customBranding: input.plan === 'premium' } },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  await Payment.findOneAndUpdate(
+    { userId: input.userId, providerOrderId: input.orderId },
+    { userId: input.userId, subscriptionId: subscription._id, plan: input.plan, provider: 'razorpay', providerOrderId: input.orderId, razorpayOrderId: input.orderId, razorpayPaymentId: input.paymentId, providerPaymentId: input.paymentId, ...(input.signature ? { razorpaySignature: input.signature } : {}), amount: input.amount, currency: input.currency, status: 'captured' },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  return subscription;
+};
+
 // Plan definitions — amounts in paise (INR × 100)
 // GET /api/payments/plans
 router.get('/plans', (_req: Request, res: Response): void => {
@@ -87,18 +103,6 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
   if (!paidPlans.includes(plan) || !PLANS[plan].selfServeCheckout) throw new AppError('Invalid plan selected.', 400);
   const planConfig = PLANS[plan];
   const amount = (planConfig.monthlyPriceInr as number) * 100;
-  const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'] : undefined;
-  const priorQuery = idempotencyKey
-    ? { userId: req.user!.id, idempotencyKey }
-    : { userId: req.user!.id, plan, status: 'created', createdAt: { $gte: new Date(Date.now() - 15 * 60 * 1000) } };
-  {
-    const prior = await Payment.findOne(priorQuery);
-    if (prior?.providerOrderId) {
-      res.json({ success: true, data: { orderId: prior.providerOrderId, amount: prior.amount, currency: prior.currency, keyId: process.env.RAZORPAY_KEY_ID, planName: plan[0].toUpperCase() + plan.slice(1) } });
-      return;
-    }
-  }
-
   let order: any;
   try {
     order = await (getRazorpayInstance().orders.create as Function)({
@@ -112,8 +116,6 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
     logger.error(`❌ Razorpay create order error: ${errMsg}`, razorErr?.error);
     throw new AppError(`Payment gateway error: ${errMsg}`, 502);
   }
-
-  await Payment.create({ userId: req.user!.id, plan, provider: 'razorpay', providerOrderId: order.id, razorpayOrderId: order.id, amount, currency: 'INR', status: 'created', ...(idempotencyKey ? { idempotencyKey } : {}) });
 
   res.json({
     success: true,
@@ -142,28 +144,15 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
     throw new AppError('Invalid payment signature. Payment not verified.', 400);
   }
 
-  const payment = await Payment.findOne({ userId: req.user!.id, providerOrderId: razorpay_order_id });
-  if (!payment) throw new AppError('Payment order not found.', 404);
-  if (payment.status === 'captured' && payment.providerPaymentId === razorpay_payment_id) {
-    const existing = await Subscription.findOne({ userId: req.user!.id });
-    res.json({ success: true, data: { plan: payment.plan, status: 'active', currentPeriodEnd: existing?.currentPeriodEnd || null } });
-    return;
+  const rzp = getRazorpayInstance() as any;
+  const order = await rzp.orders.fetch(razorpay_order_id);
+  const plan = order?.notes?.plan as CheckoutPlan;
+  if (order?.notes?.userId !== req.user!.id || !paidPlans.includes(plan)) throw new AppError('Payment order does not belong to this account.', 403);
+  const settledPayment = await rzp.payments.fetch(razorpay_payment_id);
+  if (settledPayment?.order_id !== razorpay_order_id || settledPayment?.status !== 'captured' || settledPayment?.amount !== order.amount || settledPayment?.currency !== 'INR') {
+    throw new AppError('Payment has not been captured and settled by Razorpay.', 402);
   }
-  if (payment.amount !== (PLANS[payment.plan].monthlyPriceInr as number) * 100 || payment.currency !== 'INR') throw new AppError('Stored payment amount does not match the selected plan.', 409);
-
-  const now = new Date();
-  const currentPeriodEnd = addOneMonth(now);
-  const subscription = await Subscription.findOneAndUpdate(
-    { userId: req.user!.id },
-    { userId: req.user!.id, plan: payment.plan, status: 'active', provider: 'razorpay', providerOrderId: razorpay_order_id, providerPaymentId: razorpay_payment_id, startedAt: now, currentPeriodStart: now, currentPeriodEnd, cancelledAt: null, features: { maxAutomations: PLANS[payment.plan].automationLimit, maxLeads: PLANS[payment.plan].leadsLimit, maxDmsPerMonth: PLANS[payment.plan].dmsLimit, analyticsRetentionDays: PLANS[payment.plan].analyticsRetentionDays, prioritySupport: payment.plan !== 'starter', customBranding: payment.plan === 'premium' } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-  payment.subscriptionId = subscription._id;
-  payment.razorpayPaymentId = razorpay_payment_id;
-  payment.providerPaymentId = razorpay_payment_id;
-  payment.razorpaySignature = razorpay_signature;
-  payment.status = 'captured';
-  await payment.save();
+  const subscription = await activateCapturedSubscription({ userId: req.user!.id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature, amount: order.amount, currency: order.currency });
 
   logger.info(`✅ Payment verified and subscription activated for user ${req.user!.id} (plan: ${subscription.plan})`);
   res.json({ success: true, data: { plan: subscription.plan, status: 'active', currentPeriodEnd: subscription.currentPeriodEnd } });
@@ -188,15 +177,11 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   if (event.event === 'payment.captured') {
     const payment = event.payload?.payment?.entity;
     if (payment?.order_id) {
-      const stored = await Payment.findOne({ providerOrderId: payment.order_id });
-      if (stored && stored.status !== 'captured') {
-        const now = new Date();
-        const subscription = await Subscription.findOneAndUpdate({ userId: stored.userId }, { userId: stored.userId, plan: stored.plan, status: 'active', provider: 'razorpay', providerOrderId: payment.order_id, providerPaymentId: payment.id, startedAt: now, currentPeriodStart: now, currentPeriodEnd: addOneMonth(now) }, { upsert: true, new: true, setDefaultsOnInsert: true });
-        stored.subscriptionId = subscription._id;
-        stored.providerPaymentId = payment.id;
-        stored.razorpayPaymentId = payment.id;
-        stored.status = 'captured';
-        await stored.save();
+      const order = await (getRazorpayInstance() as any).orders.fetch(payment.order_id);
+      const plan = order?.notes?.plan as CheckoutPlan;
+      const userId = order?.notes?.userId;
+      if (userId && paidPlans.includes(plan) && payment.status === 'captured' && payment.amount === order.amount && payment.currency === 'INR') {
+        await activateCapturedSubscription({ userId, plan, orderId: payment.order_id, paymentId: payment.id, amount: payment.amount, currency: payment.currency });
       }
     }
   }
