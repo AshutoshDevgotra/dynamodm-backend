@@ -1,6 +1,7 @@
 import { DMJob } from '../models/DMJob';
 import { sendInstagramDM } from '../engine/dmEngine';
 import { logger } from '../utils/logger';
+import mongoose from 'mongoose';
 
 const POLL_INTERVAL_MS = 2000;
 const LEASE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -63,15 +64,28 @@ async function processJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>
 }
 
 async function pollJobs(): Promise<void> {
+  // The worker can outlive a transient MongoDB disconnect. Skip this tick and
+  // let Mongoose reconnect instead of issuing operations on a closed client.
+  if (mongoose.connection.readyState !== 1) return;
   const jobs = await Promise.all(Array.from({ length: MAX_CONCURRENCY }, () => claimJob()));
   await Promise.all(jobs.filter(Boolean).map((job) => processJob(job!)));
 }
 
-const workerTimer = setInterval(() => {
-  pollJobs().catch((error) => logger.error('MongoDB DM worker poll failed', error));
-}, POLL_INTERVAL_MS);
+let workerTimer: NodeJS.Timeout | undefined;
 
-workerTimer.unref();
-logger.info('MongoDB DM worker initialized');
+function startWorker(): void {
+  if (workerTimer) return;
+  workerTimer = setInterval(() => {
+    pollJobs().catch((error) => logger.error('MongoDB DM worker poll failed', error));
+  }, POLL_INTERVAL_MS);
+  workerTimer.unref();
+  logger.info('MongoDB DM worker initialized');
+}
 
-export { pollJobs };
+function stopWorker(): void {
+  if (!workerTimer) return;
+  clearInterval(workerTimer);
+  workerTimer = undefined;
+}
+
+export { pollJobs, startWorker, stopWorker };

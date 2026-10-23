@@ -4,8 +4,7 @@ dotenv.config();
 import app from './app';
 import { connectDB } from './config/database';
 import { logger } from './utils/logger';
-
-require('./workers/dmWorker');
+import { startWorker } from './workers/dmWorker';
 
 const PORT = process.env.PORT || 3001;
 
@@ -13,6 +12,7 @@ async function bootstrap() {
   try {
     if (!process.env.JWT_SECRET?.trim()) throw new Error('JWT_SECRET is required to start the backend.');
     await connectDB();
+    startWorker();
     app.listen(PORT, () => {
       logger.info(`🚀 DynamoDM API server running on port ${PORT}`);
       logger.info(`📌 Environment: ${process.env.NODE_ENV}`);

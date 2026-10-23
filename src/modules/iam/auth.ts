@@ -30,6 +30,7 @@ import { sendOtpEmail } from '../../lib/email';
 const router = Router();
 const publicEmailDomains = new Set(['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'aol.com']);
 const allowedRoles = new Set(['CREATOR', 'BRAND']);
+const googleCallbackUrl = () => (process.env.GOOGLE_CALLBACK_URL?.trim() || 'https://api.v1.orangeflow.in/api/auth/google/callback');
 
 const normalizeRegistration = (body: Record<string, unknown>) => {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
@@ -221,15 +222,19 @@ router.get('/google', (req: Request, res: Response): void => {
   // Carry ?plan= through OAuth by embedding it in the state param (jwt|plan=pro)
   const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
   const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
-  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: process.env.GOOGLE_CALLBACK_URL as string, response_type: 'code', scope: 'profile email', access_type: 'offline', state });
+  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'profile email', access_type: 'offline', state });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
 router.get('/google/callback', async (req: Request, res: Response): Promise<void> => {
   const { code, state: oauthState } = req.query as { code: string; state?: string };
   if (!code) throw new AppError('No authorization code received.', 400);
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: process.env.GOOGLE_CALLBACK_URL!, grant_type: 'authorization_code' }) });
-  if (!tokenRes.ok) throw new AppError('Google authentication failed.', 401);
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: googleCallbackUrl(), grant_type: 'authorization_code' }) });
+  if (!tokenRes.ok) {
+    const googleError = await tokenRes.text();
+    console.error('Google OAuth token exchange failed', { status: tokenRes.status, response: googleError, redirectUri: googleCallbackUrl() });
+    throw new AppError('Google authentication failed.', 401);
+  }
   const tokenData = await tokenRes.json() as { access_token: string };
   const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
   if (!profileRes.ok) throw new AppError('Unable to load Google profile.', 401);

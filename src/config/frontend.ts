@@ -1,4 +1,4 @@
-const CANONICAL_PRODUCTION_FRONTEND_URL = 'https://automation.houseoforange.in';
+const CANONICAL_PRODUCTION_FRONTEND_URL = 'https://orangeflow.in';
 const LEGACY_VERCEL_FRONTEND_URL = 'https://dynamodm-frontend.vercel.app';
 
 /** Return the public frontend origin used by OAuth and browser redirects. */
