@@ -223,7 +223,7 @@ router.get('/google', (req: Request, res: Response): void => {
   // Carry ?plan= through OAuth by embedding it in the state param (jwt|plan=pro)
   const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
   const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
-  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'profile email', access_type: 'offline', state });
+  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'profile email', access_type: 'offline', prompt: 'select_account', state });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
