@@ -18,6 +18,7 @@ import paymentsRoutes from './modules/iam/payments';
 import adminRoutes from './modules/iam/admin';
 import creatorsRoutes from './modules/storefront/creators';
 import linksRoutes from './modules/storefront/links';
+import productsRoutes from './modules/storefront/products';
 import discoveryRoutes from './modules/campaigns/discovery';
 import aiMatchingRoutes from './modules/campaigns/aiMatching';
 import brandCampaignsRoutes from './modules/campaigns/brandCampaigns';
@@ -88,6 +89,7 @@ app.use('/api/payments', paymentsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/creators', creatorsRoutes);
 app.use('/api/links', linksRoutes);
+app.use('/api/products', productsRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/discovery', aiMatchingRoutes); // Merges routes
 app.use('/api/brand-campaigns', brandCampaignsRoutes);

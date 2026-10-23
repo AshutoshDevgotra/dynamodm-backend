@@ -6,6 +6,9 @@ export interface IProduct extends Document {
   title: string;
   description?: string;
   imageUrl?: string;
+  imageData?: Buffer;
+  imageMimeType?: string;
+  imageFileName?: string;
   originalUrl?: string;
   dynamoShortUrl?: string;
   affiliateData?: { network: string; commissionRate: number };
@@ -21,6 +24,9 @@ const ProductSchema = new Schema<IProduct>(
     title: { type: String, required: true },
     description: { type: String },
     imageUrl: { type: String },
+    imageData: { type: Buffer, select: false },
+    imageMimeType: { type: String },
+    imageFileName: { type: String },
     originalUrl: { type: String },
     dynamoShortUrl: { type: String, unique: true, sparse: true },
     affiliateData: { 
