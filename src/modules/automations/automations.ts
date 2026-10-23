@@ -4,6 +4,7 @@ import { Automation, IFlowStep } from '../../models/AutomationRule';
 import { Subscription } from '../../models/Subscription';
 import { AppError } from '../../middleware/errorHandler';
 import { PLANS } from '../../config/plans';
+import { CreatorAccount } from '../../models/CreatorAccount';
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
@@ -136,6 +137,11 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/automations
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
+  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  if (!instagramAccount) {
+    throw new AppError('Connect your Instagram account before creating an automation.', 409);
+  }
+
   const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
 
   // Free tier: 1 automation max (no paid subscription)
