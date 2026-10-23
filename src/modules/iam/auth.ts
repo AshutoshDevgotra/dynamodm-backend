@@ -22,6 +22,7 @@ import { authLimiter } from '../../middleware/rateLimiter';
 import { AppError } from '../../middleware/errorHandler';
 import {
   buildInstagramBusinessLoginUrl,
+  getInstagramCallbackUrl,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
 import { connectDB } from '../../config/database';
@@ -268,7 +269,7 @@ router.get('/instagram', (req: Request, res: Response): void => {
   const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
   res.redirect(buildInstagramBusinessLoginUrl({
     clientId: process.env.INSTAGRAM_APP_ID as string,
-    redirectUri: process.env.INSTAGRAM_REDIRECT_URI as string,
+    redirectUri: getInstagramCallbackUrl(),
     state,
   }));
 });
@@ -285,7 +286,7 @@ router.get('/instagram/callback', async (req: Request, res: Response): Promise<v
         client_id: process.env.INSTAGRAM_APP_ID!,
         client_secret: process.env.INSTAGRAM_APP_SECRET!,
         grant_type: 'authorization_code',
-        redirect_uri: process.env.INSTAGRAM_REDIRECT_URI!,
+        redirect_uri: getInstagramCallbackUrl(),
         code,
       }).toString(),
     });

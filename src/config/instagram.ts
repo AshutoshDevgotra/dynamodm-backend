@@ -10,6 +10,11 @@ export const INSTAGRAM_REQUIRED_SCOPES = [
 
 export const INSTAGRAM_AUTHORIZATION_URL = 'https://www.instagram.com/oauth/authorize';
 
+export const getInstagramCallbackUrl = () => (
+  process.env.INSTAGRAM_REDIRECT_URI?.trim() ||
+  'https://api.v1.orangeflow.in/api/instagram/callback'
+);
+
 /**
  * Build Instagram's Business Login entry URL. Instagram may internally
  * redirect this URL to /consent/?flow=ig_biz_login_oauth for the permission

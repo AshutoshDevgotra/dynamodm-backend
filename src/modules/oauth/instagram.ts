@@ -14,6 +14,7 @@ import {
 } from '../../lib/instagram';
 import {
   buildInstagramBusinessLoginUrl,
+  getInstagramCallbackUrl,
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
@@ -59,8 +60,7 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
     ? req.headers.authorization.slice(7)
     : req.cookies?.token || (typeof req.query.token === 'string' ? req.query.token : '');
   if (!token) throw new AppError('A valid session is required to connect Instagram.', 401);
-  const redirectUri = process.env.INSTAGRAM_REDIRECT_URI?.trim();
-  if (!redirectUri) throw new AppError('INSTAGRAM_REDIRECT_URI is not configured.', 503);
+  const redirectUri = getInstagramCallbackUrl();
   logger.info('Starting Instagram OAuth flow', { redirectUri });
   const authUrl = buildInstagramBusinessLoginUrl({
     clientId: process.env.INSTAGRAM_APP_ID as string,
@@ -133,7 +133,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       code,
       process.env.INSTAGRAM_APP_ID as string,
       process.env.INSTAGRAM_APP_SECRET as string,
-      process.env.INSTAGRAM_REDIRECT_URI as string
+      getInstagramCallbackUrl()
     );
 
     const { access_token: shortToken, user_id: igUserId } = shortLivedRes;
