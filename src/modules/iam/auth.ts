@@ -220,9 +220,15 @@ router.delete('/me', authenticate, async (req: AuthRequest, res: Response): Prom
 router.post('/logout', (_req: Request, res: Response): void => { res.clearCookie('token'); res.json({ success: true, message: 'Logged out successfully.' }); });
 
 router.get('/google', (req: Request, res: Response): void => {
-  // Carry ?plan= through OAuth by embedding it in the state param (jwt|plan=pro)
+  // Preserve a safe internal destination and selected plan through OAuth.
   const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
-  const state = plan ? `placeholder|plan=${plan}` : 'placeholder';
+  const requestedRedirect = typeof req.query.redirect === 'string' ? req.query.redirect : '';
+  const safeRedirect = requestedRedirect.startsWith('/') && !requestedRedirect.startsWith('//') ? requestedRedirect : '';
+  const state = [
+    'placeholder',
+    plan ? `plan=${encodeURIComponent(plan)}` : '',
+    safeRedirect ? `redirect=${encodeURIComponent(safeRedirect)}` : '',
+  ].filter(Boolean).join('|');
   const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'profile email', access_type: 'offline', prompt: 'select_account', state });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
@@ -253,15 +259,23 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const clientUrl = getFrontendUrl();
 
   let planRedirect = '';
+  let requestedRedirect = '';
   try {
     const stateParts = oauthState?.split('|');
-    if (stateParts && stateParts.length > 1) {
-      planRedirect = `&${stateParts[1]}`;
+    for (const statePart of stateParts?.slice(1) || []) {
+      if (statePart.startsWith('plan=')) {
+        planRedirect = `&plan=${encodeURIComponent(decodeURIComponent(statePart.slice(5)))}`;
+      }
+      if (statePart.startsWith('redirect=')) {
+        const candidate = decodeURIComponent(statePart.slice(9));
+        if (candidate.startsWith('/') && !candidate.startsWith('//')) requestedRedirect = candidate;
+      }
     }
   } catch {}
 
-  const destination = user.role === 'BRAND' ? '/brand/dashboard' : user.role === 'ADMIN' ? '/admin' : '/creator';
-  res.redirect(`${clientUrl}${destination}?token=${token}${planRedirect}`);
+  const destination = requestedRedirect || (user.role === 'BRAND' ? '/brand/dashboard' : user.role === 'ADMIN' ? '/admin' : '/creator');
+  const separator = destination.includes('?') ? '&' : '?';
+  res.redirect(`${clientUrl}${destination}${separator}token=${encodeURIComponent(token)}${requestedRedirect ? '' : planRedirect}`);
 });
 
 router.get('/instagram', (req: Request, res: Response): void => {
