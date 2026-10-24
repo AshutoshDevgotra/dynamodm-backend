@@ -175,7 +175,7 @@ export async function sendDM(
 ): Promise<{ mid: string }> {
   try {
     const messagePayload = buttons?.length
-      ? { attachment: { type: 'template', payload: { template_type: 'generic', elements: [{ title: message, buttons }] } } }
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
@@ -201,7 +201,7 @@ export async function privateReplyToComment(
 ): Promise<{ mid: string }> {
   try {
     const messagePayload = buttons?.length
-      ? { attachment: { type: 'template', payload: { template_type: 'generic', elements: [{ title: message, buttons }] } } }
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,

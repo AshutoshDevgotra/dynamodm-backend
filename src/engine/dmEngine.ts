@@ -56,7 +56,13 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
           recipientId,
           error: (error as Error)?.message,
         });
-        await privateReplyToComment(igUserId, commentId, messageText, accessToken);
+        const profileUrl = buttons.find((button) => button.type === 'web_url')?.url;
+        await privateReplyToComment(
+          igUserId,
+          commentId,
+          profileUrl ? `${messageText}\n${profileUrl}` : messageText,
+          accessToken,
+        );
       }
     } else {
       await sendDM(igUserId, recipientId, messageText, accessToken, buttons);

@@ -198,9 +198,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
           recipientId: comment.from.id,
           commentId: comment.id,
           rule,
-          message: igUsername
-            ? `First, follow us to receive the DM\nhttps://www.instagram.com/${igUsername}/`
-            : 'First, follow us to receive the DM',
+          message: 'First, follow us to receive the DM',
           username: comment.from.username,
           commentText: comment.text,
           postId: comment.media?.id,
