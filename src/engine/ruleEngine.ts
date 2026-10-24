@@ -198,11 +198,12 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
           recipientId: comment.from.id,
           commentId: comment.id,
           rule,
-          message: igUsername ? `Follow us.\nhttps://www.instagram.com/${igUsername}/` : 'Follow us.',
+          message: 'First, follow us to receive the DM',
           username: comment.from.username,
           commentText: comment.text,
           postId: comment.media?.id,
           jobId,
+          buttons: igUsername ? followButtons(rule._id.toString(), igUsername) : undefined,
         });
         logger.info(`Follow gate held resource DM for ${comment.from.id}`);
         continue;
