@@ -192,7 +192,18 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     if (followStep && encryptedAccessToken) {
       const followsCreator = await checkFollowerRelationship(igUserId, comment.from.id, decryptToken(encryptedAccessToken));
       if (!followsCreator) {
-        await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: 'Follow us.', username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId, buttons: igUsername ? followButtons(rule._id.toString(), igUsername) : undefined });
+        await queueCommentDM({
+          creatorId,
+          igUserId,
+          recipientId: comment.from.id,
+          commentId: comment.id,
+          rule,
+          message: igUsername ? `Follow us.\nhttps://www.instagram.com/${igUsername}/` : 'Follow us.',
+          username: comment.from.username,
+          commentText: comment.text,
+          postId: comment.media?.id,
+          jobId,
+        });
         logger.info(`Follow gate held resource DM for ${comment.from.id}`);
         continue;
       }
