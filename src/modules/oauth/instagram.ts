@@ -221,7 +221,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
               try { window.close(); } catch(e) {}
               setTimeout(function() {
                 try { window.close(); } catch(e) {}
-                if (!window.closed && (!window.opener || window.opener === window)) {
+                if (!window.closed) {
                   window.location.replace(${dashboardUrl});
                 }
               }, 500);
