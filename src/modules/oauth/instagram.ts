@@ -199,36 +199,9 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     logger.info(`✅ OAuth complete for IG user ${igUserId}`);
 
     const frontendUrl = getFrontendUrl();
-    const profileUrl = `https://www.instagram.com/${igProfile.username}/`;
-    const safeFrontendUrl = JSON.stringify(frontendUrl);
-    const successMessage = JSON.stringify({ type: 'INSTAGRAM_AUTH_SUCCESS', username: igProfile.username, profileUrl });
-    const dashboardUrl = JSON.stringify(`${frontendUrl}/creator`);
-    const html = `
-      <html>
-        <head><title>Connecting...</title></head>
-        <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fff;">
-          <div style="text-align:center">
-            <div style="font-size:32px;margin-bottom:12px">&#x2705;</div>
-            <p style="font-size:15px;color:#a78bfa">Instagram connected! Closing...</p>
-          </div>
-          <script>
-            (function() {
-              try {
-                if (window.opener && window.opener !== window && !window.opener.closed) {
-                  window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
-                }
-              } catch(e) {}
-              if (window.opener && window.opener !== window && !window.opener.closed) {
-                try { window.close(); } catch(e) {}
-                return;
-              }
-              window.location.replace(${dashboardUrl});
-            })();
-          </script>
-        </body>
-      </html>
-    `;
-    res.send(html);
+    // Complete the OAuth flow with a server-side redirect. This works in the
+    // same browser tab and does not depend on callback-page JavaScript running.
+    res.redirect(302, `${frontendUrl}/creator`);
   } catch (error: any) {
     logger.error('Instagram OAuth callback error:', error);
     res.status(400).send(`Authentication failed: ${error.message}`);
