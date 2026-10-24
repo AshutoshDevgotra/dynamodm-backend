@@ -9,13 +9,14 @@ export interface IFlowStep {
   attachment?: string;
   fallbackAction?: string;
   delaySeconds?: number;
+  role?: 'PRIMARY' | 'PRE_DM' | 'FOLLOW_GATE';
 }
 
 export interface IAutomation extends Document {
   creatorId: mongoose.Types.ObjectId;
   name: string;
   trigger: {
-    type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'DM';
+    type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'LIVE_COMMENT' | 'DM';
     keywords: string[];
     postId?: string;
   };
@@ -23,7 +24,13 @@ export interface IAutomation extends Document {
   publicReply?: {
     enabled: boolean;
     message?: string;
+    messages?: string[];
   };
+  aiFallback?: { enabled: boolean; instruction?: string };
+  excludedKeywords?: string[];
+  delaySeconds?: number;
+  preDms?: { type: 'FOLLOW' | 'EMAIL'; message: string }[];
+  primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
   isActive: boolean;
   stats: {
     triggeredCount: number;
@@ -39,7 +46,7 @@ const AutomationSchema = new Schema<IAutomation>(
     creatorId: { type: Schema.Types.ObjectId, ref: 'CreatorAccount', required: true, index: true },
     name: { type: String, required: true },
     trigger: {
-      type: { type: String, enum: ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'DM'], required: true },
+      type: { type: String, enum: ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'LIVE_COMMENT', 'DM'], required: true },
       keywords: { type: [String], default: [] },
       postId: { type: String }
     },
@@ -50,11 +57,18 @@ const AutomationSchema = new Schema<IAutomation>(
       attachment: { type: String },
       fallbackAction: { type: String },
       delaySeconds: { type: Number }
+      ,role: { type: String, enum: ['PRIMARY', 'PRE_DM', 'FOLLOW_GATE'] }
     }],
     publicReply: {
       enabled: { type: Boolean, default: false },
       message: { type: String },
+      messages: { type: [String], default: [] },
     },
+    aiFallback: { enabled: { type: Boolean, default: false }, instruction: { type: String } },
+    excludedKeywords: { type: [String], default: [] },
+    delaySeconds: { type: Number, default: 0 },
+    preDms: [{ type: { type: String, enum: ['FOLLOW', 'EMAIL'] }, message: String }],
+    primaryDm: { type: { type: String, enum: ['TEXT', 'TEXT_BUTTON'] }, buttonLabel: String, buttonUrl: String, trackButtonClicks: Boolean },
     isActive: { type: Boolean, default: true },
     stats: {
       triggeredCount: { type: Number, default: 0 },

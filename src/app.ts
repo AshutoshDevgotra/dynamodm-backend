@@ -70,7 +70,11 @@ if (process.env.NODE_ENV !== 'test') {
 // ─── Rate Limiting ─────────────────────────────────────────────────────────────
 // Skip global rate limiter for Instagram webhook
 app.use((req, res, next) => {
-  if (req.path === '/api/webhooks/instagram') return next();
+  // Webhooks are protected by their signature, and authentication endpoints
+  // have their own failed-attempt limiter. Keeping them out of the broad
+  // request bucket prevents normal app polling from blocking signup/login or
+  // Instagram connection.
+  if (req.path === '/api/webhooks/instagram' || req.path.startsWith('/api/auth')) return next();
   return globalLimiter(req, res, next);
 });
 

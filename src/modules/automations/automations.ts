@@ -8,17 +8,23 @@ import { CreatorAccount } from '../../models/CreatorAccount';
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
-  type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'DM';
+  type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'LIVE_COMMENT' | 'DM';
   keywords: string[];
   postId?: string;
 };
 type IAutomationFlowStep = IFlowStep;
-type IAutomationPublicReply = { enabled: boolean; message?: string };
+type IAutomationPublicReply = { enabled: boolean; message?: string; messages?: string[] };
+type IAutomationParsed = {
+  name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply;
+  aiFallback?: { enabled: boolean; instruction?: string }; excludedKeywords?: string[]; delaySeconds?: number;
+  preDms?: { type: 'FOLLOW' | 'EMAIL'; message: string }[];
+  primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
+};
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
 
-const parseAutomationPayload = (body: any): { name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply } => {
+const parseAutomationPayload = (body: any): IAutomationParsed => {
   const {
     name,
     keyword,
@@ -31,6 +37,16 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     flow: flowFromBody,
     sendPublicReply,
     publicReplyMessage,
+    requireFollow,
+    followRequiredMessage,
+    aiFallback,
+    aiFallbackInstruction,
+    excludedKeywords,
+    preDms,
+    primaryDmType,
+    buttonLabel,
+    buttonUrl,
+    trackButtonClicks,
   } = body;
 
   if (!name) {
@@ -45,6 +61,9 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
       publicReply: {
         enabled: Boolean(body.publicReply?.enabled ?? sendPublicReply),
         message: String(body.publicReply?.message ?? publicReplyMessage ?? '').trim(),
+        messages: Array.isArray(body.publicReply?.messages ?? body.publicReplyMessages)
+          ? (body.publicReply?.messages ?? body.publicReplyMessages).map((message: unknown) => String(message).trim()).filter(Boolean).slice(0, 3)
+          : String(body.publicReply?.message ?? publicReplyMessage ?? '').split(/\r?\n/).map((message) => message.trim()).filter(Boolean).slice(0, 3),
       },
     };
   }
@@ -53,13 +72,14 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     throw new AppError('triggerType is required (e.g. "comment", "dm", "story_reply", "keyword").', 400);
   }
 
-  const triggerTypeUpper = (triggerType as string).toUpperCase() as IAutomationTrigger['type'];
-  const validTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'DM'];
+  const triggerAlias: Record<string, IAutomationTrigger['type']> = { post_comment: 'COMMENT', comment: 'COMMENT', reel: 'COMMENT', story: 'STORY_REPLY', story_reply: 'STORY_REPLY', live: 'LIVE_COMMENT', live_comment: 'LIVE_COMMENT', dm: 'DM' };
+  const triggerTypeUpper = (triggerAlias[String(triggerType).toLowerCase()] || String(triggerType).toUpperCase()) as IAutomationTrigger['type'];
+  const validTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'LIVE_COMMENT', 'DM'];
   if (!validTriggerTypes.includes(triggerTypeUpper)) {
     throw new AppError(`Invalid triggerType "${triggerType}". Must be one of: comment, keyword, story_reply, dm.`, 400);
   }
 
-  if ((triggerTypeUpper === 'COMMENT' || triggerTypeUpper === 'KEYWORD') && !keyword) {
+  if ((triggerTypeUpper === 'KEYWORD' || triggerTypeUpper === 'LIVE_COMMENT') && !keyword) {
     throw new AppError(`keyword is required when triggerType is "${triggerType}".`, 400);
   }
 
@@ -68,9 +88,12 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
   }
 
   const publicReplyEnabled = Boolean(body.publicReply?.enabled ?? sendPublicReply);
-  const publicReplyText = String(body.publicReply?.message ?? publicReplyMessage ?? (triggerTypeUpper === 'COMMENT' ? 'Check your DM. Link has been sent.' : '')).trim();
-  if (publicReplyEnabled && !publicReplyText) {
-    throw new AppError('publicReplyMessage is required when public replies are enabled.', 400);
+  const publicReplyMessages = Array.isArray(body.publicReplyMessages)
+    ? body.publicReplyMessages.map((message: unknown) => String(message).trim()).filter(Boolean).slice(0, 3)
+    : String(publicReplyMessage ?? (triggerTypeUpper === 'COMMENT' ? 'Check your DM. Link has been sent.' : '')).split(/\r?\n/).map((message) => message.trim()).filter(Boolean).slice(0, 3);
+  const publicReplyText = publicReplyMessages[0] || '';
+  if (publicReplyEnabled && publicReplyMessages.length < 2) {
+    throw new AppError('Add at least 2 public reply variants when public replies are enabled.', 400);
   }
 
   const trigger: IAutomationTrigger = {
@@ -90,18 +113,33 @@ const parseAutomationPayload = (body: any): { name: string; trigger: IAutomation
     flowSteps.push({ step: 1, type: 'DELAY', delaySeconds: delay });
   }
 
+  if (requireFollow ?? true) {
+    flowSteps.push({
+      step: flowSteps.length + 1,
+      type: 'CHECK_FOLLOW',
+      content: String(followRequiredMessage || 'First follow us to get the link or any PDF or the resource.').trim(),
+      fallbackAction: 'SEND_FOLLOW_REQUIRED_DM',
+    });
+  }
+
   flowSteps.push({
     step: flowSteps.length + 1,
     type: 'SEND_DM',
     content: dmContent,
     ...(delay > 0 ? { delaySeconds: delay } : {}),
+    role: 'PRIMARY',
   });
 
   return {
     name,
     trigger,
     flow: flowSteps,
-    publicReply: { enabled: publicReplyEnabled, message: publicReplyText },
+    publicReply: { enabled: publicReplyEnabled, message: publicReplyText, messages: publicReplyMessages },
+    aiFallback: { enabled: Boolean(aiFallback), instruction: String(aiFallbackInstruction || '').trim() },
+    excludedKeywords: String(excludedKeywords || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
+    delaySeconds: delay,
+    preDms: Array.isArray(preDms) ? preDms.slice(0, 2).map((item: any) => ({ type: (item.type === 'EMAIL' ? 'EMAIL' : 'FOLLOW') as 'FOLLOW' | 'EMAIL', message: String(item.message || '').trim() })).filter((item: any) => item.message) : [],
+    primaryDm: { type: primaryDmType === 'TEXT_BUTTON' ? 'TEXT_BUTTON' : 'TEXT', buttonLabel: String(buttonLabel || '').trim(), buttonUrl: String(buttonUrl || '').trim(), trackButtonClicks: Boolean(trackButtonClicks) },
   };
 };
 
@@ -120,6 +158,14 @@ const formatAutomation = (auto: any) => {
     delaySeconds: delayStep?.delaySeconds || 0,
     sendPublicReply: Boolean(doc.publicReply?.enabled),
     publicReplyMessage: doc.publicReply?.message || '',
+    publicReplyMessages: doc.publicReply?.messages || (doc.publicReply?.message ? [doc.publicReply.message] : []),
+    requireFollow: Boolean(doc.flow?.some((s: any) => s.type === 'CHECK_FOLLOW')),
+    followRequiredMessage: doc.flow?.find((s: any) => s.type === 'CHECK_FOLLOW')?.content || '',
+    aiFallback: Boolean(doc.aiFallback?.enabled),
+    aiFallbackInstruction: doc.aiFallback?.instruction || '',
+    excludedKeywords: doc.excludedKeywords || [],
+    preDms: doc.preDms || [],
+    primaryDm: doc.primaryDm || { type: 'TEXT' },
     matchType: 'contains',
     stats: {
       triggered: doc.stats?.triggeredCount ?? doc.stats?.triggered ?? 0,
@@ -155,14 +201,11 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     throw new AppError(`Your ${subscription.plan} plan allows ${maxAutomations} automation(s). Upgrade to add more.`, 403);
   }
 
-  const { name, trigger, flow, publicReply } = parseAutomationPayload(req.body);
+  const parsed = parseAutomationPayload(req.body);
 
   const automation = await Automation.create({
     creatorId: req.user!.id,
-    name,
-    trigger,
-    flow,
-    publicReply,
+    ...parsed,
   });
 
   res.status(201).json({ success: true, data: { automation: formatAutomation(automation) } });
@@ -177,11 +220,11 @@ router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // PUT /api/automations/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const { name, trigger, flow, publicReply } = parseAutomationPayload(req.body);
+  const parsed = parseAutomationPayload(req.body);
 
   const automation = await Automation.findOneAndUpdate(
     { _id: req.params.id, creatorId: req.user!.id },
-    { name, trigger, flow, publicReply },
+    { $set: parsed },
     { new: true, runValidators: true }
   );
   if (!automation) throw new AppError('Automation not found.', 404);

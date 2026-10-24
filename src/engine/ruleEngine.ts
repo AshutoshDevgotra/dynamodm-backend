@@ -6,9 +6,10 @@ import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { DMJob } from '../models/DMJob';
 import { logger } from '../utils/logger';
 import { decryptToken } from '../modules/oauth/instagram';
-import { publicReplyToComment } from '../lib/instagram';
+import { checkFollowerRelationship, publicReplyToComment } from '../lib/instagram';
 import crypto from 'crypto';
 import { assertUsageAvailable } from '../utils/usage';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 interface CommentEvent {
   from: { id: string; username?: string };
@@ -49,6 +50,19 @@ function matchesKeyword(text: string, keywords: string[]): boolean {
   return keywords.some(keyword => normalizedText.includes(keyword.toLowerCase().trim()));
 }
 
+async function aiMatchesComment(text: string, instruction?: string): Promise<boolean> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !instruction?.trim()) return false;
+  try {
+    const model = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(`Return only YES or NO. Does this Instagram comment match the creator's automation intent?\nIntent: ${instruction}\nComment: ${text}`);
+    return /^yes\b/i.test(result.response.text().trim());
+  } catch (error) {
+    logger.warn('AI comment fallback failed; skipping unmatched comment.');
+    return false;
+  }
+}
+
 export async function processWebhookEvent(payload: WebhookPayload): Promise<void> {
   const isInstagram = payload.object === 'instagram';
   logger.info(`🔄 Processing webhook event — object: ${payload.object}`);
@@ -85,7 +99,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     if (entry.messaging) {
       for (const msg of entry.messaging) {
         if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
-        await handleDM(creatorId, creatorAccount.igUserId!, msg);
+        await handleDM(creatorId, creatorAccount.igUserId!, msg, creatorAccount.igAccessToken);
       }
     }
   }
@@ -99,7 +113,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     timestamp: new Date(),
   });
 
-  const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': 'COMMENT' });
+    const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': { $in: ['COMMENT', 'LIVE_COMMENT', 'STORY_REPLY'] } });
   logger.info(`🔍 Found ${rules.length} active COMMENT automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
@@ -111,7 +125,13 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       continue;
     }
 
-    if (!matchesKeyword(comment.text, rule.trigger.keywords)) {
+    const excluded = rule.excludedKeywords || [];
+    if (excluded.some((keyword) => comment.text.toLowerCase().includes(keyword))) continue;
+    const keywordMatch = matchesKeyword(comment.text, rule.trigger.keywords);
+    const aiMatch = !keywordMatch && rule.aiFallback?.enabled
+      ? await aiMatchesComment(comment.text, rule.aiFallback.instruction)
+      : false;
+    if (!keywordMatch && !aiMatch) {
       logger.info(`⏭️ Skipping rule ${rule._id} — keyword not matched (keywords: ${rule.trigger.keywords}, text: "${comment.text}")`);
       continue;
     }
@@ -126,7 +146,9 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
 
     if (rule.publicReply?.enabled && rule.publicReply.message && comment.id && encryptedAccessToken) {
       try {
-        await publicReplyToComment(comment.id, rule.publicReply.message, decryptToken(encryptedAccessToken));
+        const publicMessages = rule.publicReply.messages?.length ? rule.publicReply.messages : [rule.publicReply.message];
+        const index = comment.id.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % publicMessages.length;
+        await publicReplyToComment(comment.id, publicMessages[index], decryptToken(encryptedAccessToken));
         logger.info(`✅ Public reply sent for comment ${comment.id}`);
       } catch (publicReplyError: any) {
         logger.error('Public Instagram comment reply failed', publicReplyError?.message || publicReplyError);
@@ -146,10 +168,25 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       continue;
     }
 
-    const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM');
+    const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
+    const followStep = rule.flow.find(step => step.type === 'CHECK_FOLLOW');
     if (!sendDmStep || !sendDmStep.content) {
       logger.warn(`⚠️ Rule ${rule._id} has no SEND_DM step with content — skipping`);
       continue;
+    }
+
+    if (followStep && encryptedAccessToken) {
+      const followsCreator = await checkFollowerRelationship(igUserId, comment.from.id, decryptToken(encryptedAccessToken));
+      if (!followsCreator) {
+        const followMessage = followStep.content || 'First follow us to get the link or any PDF or the resource.';
+        await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: followMessage, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId });
+        logger.info(`Follow gate held resource DM for ${comment.from.id}`);
+        continue;
+      }
+    }
+
+    for (const [index, preDm] of (rule.preDms || []).entries()) {
+      await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: preDm.message, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId: `${jobId}:pre:${index}` });
     }
 
     const existingLead = await Lead.exists({ creatorId, instagramUserId: comment.from.id });
@@ -183,7 +220,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
-      nextAttemptAt: new Date(),
+      nextAttemptAt: new Date(Date.now() + (rule.delaySeconds || sendDmStep.delaySeconds || 0) * 1000),
     });
 
     await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
@@ -198,7 +235,40 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
   }
 }
 
-async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Promise<void> {
+async function queueCommentDM(input: {
+  creatorId: string;
+  igUserId: string;
+  recipientId: string;
+  commentId: string;
+  rule: IAutomation;
+  message: string;
+  username?: string;
+  commentText: string;
+  postId?: string;
+  jobId: string;
+}): Promise<void> {
+  const { creatorId, igUserId, recipientId, commentId, rule, message, username, commentText, postId, jobId } = input;
+  const existingLead = await Lead.exists({ creatorId, instagramUserId: recipientId });
+  if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
+  await assertUsageAvailable(creatorId, 'dms');
+  const lead = await Lead.findOneAndUpdate(
+    { creatorId, instagramUserId: recipientId },
+    { $setOnInsert: { creatorId, instagramUserId: recipientId, username, source: 'comment', commentText, postId, automationRuleId: rule._id } },
+    { upsert: true, new: true }
+  );
+  const dmLog = await DMLog.create({
+    creatorId, leadId: lead._id, automationRuleId: rule._id,
+    instagramUserId: recipientId, instagramUsername: username,
+    messageText: message, status: 'queued',
+  });
+  await DMJob.create({
+    jobId, dmLogId: dmLog._id.toString(), creatorId, igUserId,
+    recipientId, commentId, message, automationRuleId: rule._id.toString(), nextAttemptAt: new Date(),
+  });
+  await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
+}
+
+async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, encryptedAccessToken?: string): Promise<void> {
   const fromId = msg.sender.id;
   const messageText = msg.message.text!;
   const messageId = msg.message.mid;
@@ -237,6 +307,13 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       continue;
     }
 
+    let messageToSend = sendDmStep.content;
+    const followStep = rule.flow.find(step => step.type === 'CHECK_FOLLOW');
+    if (followStep && encryptedAccessToken) {
+      const followsCreator = await checkFollowerRelationship(igUserId, fromId, decryptToken(encryptedAccessToken));
+      if (!followsCreator) messageToSend = followStep.content || 'First follow us to get the link or any PDF or the resource.';
+    }
+
     const existingLead = await Lead.exists({ creatorId, instagramUserId: fromId });
     if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
     await assertUsageAvailable(creatorId, 'dms');
@@ -255,7 +332,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
     const dmLog = await DMLog.create({
       creatorId, leadId: lead._id, automationRuleId: rule._id,
       instagramUserId: fromId, instagramUsername: 'Unknown',
-      messageText: sendDmStep.content, status: 'queued',
+      messageText: messageToSend, status: 'queued',
     });
 
       const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${messageId}`).digest('hex');
@@ -264,7 +341,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage): Pr
       dmLogId: dmLog._id.toString(),
       creatorId, igUserId,
       recipientId: fromId,
-      message: sendDmStep.content,
+      message: messageToSend,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
         nextAttemptAt: new Date(),
