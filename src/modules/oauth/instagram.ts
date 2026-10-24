@@ -48,7 +48,7 @@ export function decryptToken(encrypted: string): string {
 async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: string): Promise<void> {
   await axios.post(`${INSTAGRAM_API}/${instagramUserId}/subscribed_apps`, null, {
     params: {
-      subscribed_fields: 'comments,messages',
+      subscribed_fields: 'comments,messages,messaging_postbacks',
       access_token: accessToken,
     },
   });

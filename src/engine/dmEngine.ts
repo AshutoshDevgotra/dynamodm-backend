@@ -46,10 +46,8 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   });
 
   try {
-    // Button templates are sent through the regular messaging endpoint because
-    // Instagram's comment-private-reply endpoint only accepts plain replies.
-    if (commentId && !buttons?.length) {
-      await privateReplyToComment(igUserId, commentId, messageText, accessToken);
+    if (commentId) {
+      await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons);
     } else {
       await sendDM(igUserId, recipientId, messageText, accessToken, buttons);
     }
