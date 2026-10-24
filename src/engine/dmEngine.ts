@@ -51,7 +51,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
         await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons);
       } catch (error) {
         if (!buttons?.length) throw error;
-        logger.warn('Instagram rejected the interactive private reply; retrying as plain text.', {
+        logger.warn('Interactive private reply failed; sending the plain-text fallback.', {
           commentId,
           recipientId,
           error: (error as Error)?.message,
