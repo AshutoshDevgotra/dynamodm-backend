@@ -13,14 +13,14 @@ interface DMJobData {
   recipientId: string;
   commentId?: string;
   message: string;
-  button?: { title: string; url: string };
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[];
   ctaLink?: string;
   attachmentUrl?: string;
   automationRuleId: string;
 }
 
 export async function sendInstagramDM(data: DMJobData): Promise<void> {
-  const { dmLogId, creatorId, igUserId, recipientId, commentId, message, ctaLink, button, automationRuleId } = data;
+  const { dmLogId, creatorId, igUserId, recipientId, commentId, message, ctaLink, buttons, automationRuleId } = data;
 
   logger.info(`📤 sendInstagramDM called`, {
     dmLogId, creatorId, igUserId, recipientId, automationRuleId,
@@ -48,10 +48,10 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   try {
     // Button templates are sent through the regular messaging endpoint because
     // Instagram's comment-private-reply endpoint only accepts plain replies.
-    if (commentId && !button) {
-      await privateReplyToComment(igUserId, commentId, messageText, accessToken, button);
+    if (commentId && !buttons?.length) {
+      await privateReplyToComment(igUserId, commentId, messageText, accessToken);
     } else {
-      await sendDM(igUserId, recipientId, messageText, accessToken, button);
+      await sendDM(igUserId, recipientId, messageText, accessToken, buttons);
     }
 
     logger.info(`✅ DM sent successfully to ${recipientId}`);

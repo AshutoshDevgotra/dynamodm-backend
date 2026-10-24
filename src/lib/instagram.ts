@@ -171,11 +171,11 @@ export async function sendDM(
   recipientId: string,
   message: string,
   accessToken: string,
-  button?: { title: string; url: string }
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[]
 ): Promise<{ mid: string }> {
   try {
-    const messagePayload = button
-      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons: [{ type: 'web_url', url: button.url, title: button.title }] } } }
+    const messagePayload = buttons?.length
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
@@ -197,11 +197,11 @@ export async function privateReplyToComment(
   commentId: string,
   message: string,
   accessToken: string,
-  button?: { title: string; url: string }
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[]
 ): Promise<{ mid: string }> {
   try {
-    const messagePayload = button
-      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons: [{ type: 'web_url', url: button.url, title: button.title }] } } }
+    const messagePayload = buttons?.length
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,

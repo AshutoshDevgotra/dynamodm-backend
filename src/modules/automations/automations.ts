@@ -117,7 +117,7 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     flowSteps.push({
       step: flowSteps.length + 1,
       type: 'CHECK_FOLLOW',
-      content: String(followRequiredMessage || 'First follow us to get the link or any PDF or the resource.').trim(),
+      content: 'Follow us.',
       fallbackAction: 'SEND_FOLLOW_REQUIRED_DM',
     });
   }

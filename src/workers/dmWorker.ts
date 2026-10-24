@@ -34,7 +34,7 @@ async function processJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>
       igUserId: job.igUserId,
       recipientId: job.recipientId,
       message: job.message,
-      button: job.button,
+      buttons: job.buttons,
         commentId: job.commentId,
       attachmentUrl: job.attachmentUrl,
       automationRuleId: job.automationRuleId,

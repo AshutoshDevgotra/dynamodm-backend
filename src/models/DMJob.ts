@@ -8,7 +8,7 @@ export interface IDMJob extends Document {
   recipientId: string;
   commentId?: string;
   message: string;
-  button?: { title: string; url: string };
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[];
   attachmentUrl?: string;
   automationRuleId: string;
   status: 'queued' | 'processing' | 'completed' | 'failed';
@@ -30,10 +30,12 @@ const DMJobSchema = new Schema<IDMJob>(
     recipientId: { type: String, required: true },
     commentId: { type: String },
     message: { type: String, required: true },
-    button: {
+    buttons: [{
+      type: { type: String, enum: ['web_url', 'postback'] },
       title: { type: String },
       url: { type: String },
-    },
+      payload: { type: String },
+    }],
     attachmentUrl: { type: String },
     automationRuleId: { type: String, required: true },
     status: {
