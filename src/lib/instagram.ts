@@ -170,14 +170,18 @@ export async function sendDM(
   igUserId: string,
   recipientId: string,
   message: string,
-  accessToken: string
+  accessToken: string,
+  button?: { title: string; url: string }
 ): Promise<{ mid: string }> {
   try {
+    const messagePayload = button
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons: [{ type: 'web_url', url: button.url, title: button.title }] } } }
+      : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
         recipient: { id: recipientId },
-        message: { text: message },
+        message: messagePayload,
       },
       { params: { access_token: accessToken } }
     );
@@ -192,14 +196,18 @@ export async function privateReplyToComment(
   igUserId: string,
   commentId: string,
   message: string,
-  accessToken: string
+  accessToken: string,
+  button?: { title: string; url: string }
 ): Promise<{ mid: string }> {
   try {
+    const messagePayload = button
+      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons: [{ type: 'web_url', url: button.url, title: button.title }] } } }
+      : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
         recipient: { comment_id: commentId },
-        message: { text: message },
+        message: messagePayload,
       },
       { params: { access_token: accessToken } }
     );

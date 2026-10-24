@@ -89,7 +89,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
               id: commentData.id || '',
               media: mediaId ? { id: mediaId } : undefined,
             };
-            await handleComment(creatorId, creatorAccount.igUserId!, comment, creatorAccount.igAccessToken);
+            await handleComment(creatorId, creatorAccount.igUserId!, comment, creatorAccount.igAccessToken, creatorAccount.igUsername);
           }
         }
       }
@@ -99,13 +99,13 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     if (entry.messaging) {
       for (const msg of entry.messaging) {
         if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
-        await handleDM(creatorId, creatorAccount.igUserId!, msg, creatorAccount.igAccessToken);
+        await handleDM(creatorId, creatorAccount.igUserId!, msg, creatorAccount.igAccessToken, creatorAccount.igUsername);
       }
     }
   }
 }
 
-async function handleComment(creatorId: string, igUserId: string, comment: CommentEvent, encryptedAccessToken?: string): Promise<void> {
+async function handleComment(creatorId: string, igUserId: string, comment: CommentEvent, encryptedAccessToken?: string, igUsername?: string): Promise<void> {
   await AnalyticsEvent.create({
     creatorId,
     eventType: 'comment_received',
@@ -179,7 +179,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       const followsCreator = await checkFollowerRelationship(igUserId, comment.from.id, decryptToken(encryptedAccessToken));
       if (!followsCreator) {
         const followMessage = followStep.content || 'First follow us to get the link or any PDF or the resource.';
-        await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: followMessage, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId });
+        await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: followMessage, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId, button: igUsername ? { title: 'Follow us', url: `https://www.instagram.com/${igUsername}/` } : undefined });
         logger.info(`Follow gate held resource DM for ${comment.from.id}`);
         continue;
       }
@@ -246,8 +246,9 @@ async function queueCommentDM(input: {
   commentText: string;
   postId?: string;
   jobId: string;
+  button?: { title: string; url: string };
 }): Promise<void> {
-  const { creatorId, igUserId, recipientId, commentId, rule, message, username, commentText, postId, jobId } = input;
+  const { creatorId, igUserId, recipientId, commentId, rule, message, username, commentText, postId, jobId, button } = input;
   const existingLead = await Lead.exists({ creatorId, instagramUserId: recipientId });
   if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
   await assertUsageAvailable(creatorId, 'dms');
@@ -263,12 +264,12 @@ async function queueCommentDM(input: {
   });
   await DMJob.create({
     jobId, dmLogId: dmLog._id.toString(), creatorId, igUserId,
-    recipientId, commentId, message, automationRuleId: rule._id.toString(), nextAttemptAt: new Date(),
+    recipientId, commentId, message, button, automationRuleId: rule._id.toString(), nextAttemptAt: new Date(),
   });
   await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
 }
 
-async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, encryptedAccessToken?: string): Promise<void> {
+async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, encryptedAccessToken?: string, igUsername?: string): Promise<void> {
   const fromId = msg.sender.id;
   const messageText = msg.message.text!;
   const messageId = msg.message.mid;
@@ -308,9 +309,10 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
     }
 
     let messageToSend = sendDmStep.content;
+    let followsCreator = true;
     const followStep = rule.flow.find(step => step.type === 'CHECK_FOLLOW');
     if (followStep && encryptedAccessToken) {
-      const followsCreator = await checkFollowerRelationship(igUserId, fromId, decryptToken(encryptedAccessToken));
+      followsCreator = await checkFollowerRelationship(igUserId, fromId, decryptToken(encryptedAccessToken));
       if (!followsCreator) messageToSend = followStep.content || 'First follow us to get the link or any PDF or the resource.';
     }
 
@@ -342,6 +344,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
       creatorId, igUserId,
       recipientId: fromId,
       message: messageToSend,
+        button: !followsCreator && igUsername ? { title: 'Follow us', url: `https://www.instagram.com/${igUsername}/` } : undefined,
       attachmentUrl: sendDmStep.attachment,
       automationRuleId: rule._id.toString(),
         nextAttemptAt: new Date(),

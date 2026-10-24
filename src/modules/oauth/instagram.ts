@@ -202,7 +202,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     const profileUrl = `https://www.instagram.com/${igProfile.username}/`;
     const safeFrontendUrl = JSON.stringify(frontendUrl);
     const successMessage = JSON.stringify({ type: 'INSTAGRAM_AUTH_SUCCESS', username: igProfile.username, profileUrl });
-    const dashboardUrl = JSON.stringify(`${frontendUrl}/creator/instagram?connected=${encodeURIComponent(igProfile.username)}`);
+    const dashboardUrl = JSON.stringify(`${frontendUrl}/creator`);
     const html = `
       <html>
         <head><title>Connecting...</title></head>
@@ -218,13 +218,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
                   window.opener.postMessage(${successMessage}, ${safeFrontendUrl});
                 }
               } catch(e) {}
-              try { window.close(); } catch(e) {}
-              setTimeout(function() {
+              if (window.opener && window.opener !== window && !window.opener.closed) {
                 try { window.close(); } catch(e) {}
-                if (!window.closed) {
-                  window.location.replace(${dashboardUrl});
-                }
-              }, 500);
+                return;
+              }
+              window.location.replace(${dashboardUrl});
             })();
           </script>
         </body>
