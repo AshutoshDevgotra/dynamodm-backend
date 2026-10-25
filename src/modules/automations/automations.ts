@@ -210,7 +210,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/automations
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId igUsername');
   if (!instagramAccount) {
     throw new AppError('Connect your Instagram account before creating an automation.', 409);
   }
