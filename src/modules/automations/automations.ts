@@ -275,8 +275,10 @@ router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<voi
 
 // DELETE /api/automations/:id
 router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
-  const automation = await Automation.findOneAndDelete({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
+  // Deletion is owned by the authenticated workspace, not by the current
+  // Instagram connection. This keeps deletion available after disconnecting
+  // or switching the connected Instagram account.
+  const automation = await Automation.findOneAndDelete({ _id: req.params.id, creatorId: req.user!.id });
   if (!automation) throw new AppError('Automation not found.', 404);
   res.json({ success: true, message: 'Automation deleted successfully.' });
 });
