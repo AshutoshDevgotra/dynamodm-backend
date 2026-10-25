@@ -4,6 +4,7 @@ import { AnalyticsEvent } from '../../models/AnalyticsEvent';
 import { DMLog } from '../../models/DMLog';
 import { Lead } from '../../models/Lead';
 import { Automation } from '../../models/AutomationRule';
+import { CreatorAccount } from '../../models/CreatorAccount';
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -11,6 +12,8 @@ router.use(authenticate, requireActiveSubscription);
 // GET /api/analytics/summary
 router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> => {
   const creatorId = req.user!.id;
+  const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('_id igUserId');
+  const automationScope = account ? { instagramAccountId: account._id, instagramUserId: account.igUserId } : { instagramAccountId: null };
   const days = parseInt(req.query.days as string) || 30;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -19,7 +22,7 @@ router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> =>
     DMLog.countDocuments({ creatorId, status: 'failed', createdAt: { $gte: since } }),
     Lead.countDocuments({ creatorId }),
     Lead.countDocuments({ creatorId, createdAt: { $gte: since } }),
-    Automation.countDocuments({ creatorId, isActive: true }),
+    Automation.countDocuments({ creatorId, isActive: true, ...automationScope }),
   ]);
 
   const [commentsReceived, linkClicks] = await Promise.all([
@@ -62,7 +65,8 @@ router.get('/timeseries', async (req: AuthRequest, res: Response): Promise<void>
 
 // GET /api/analytics/top-automations
 router.get('/top-automations', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automations = await Automation.find({ creatorId: req.user!.id })
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  const automations = await Automation.find({ creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId })
     .select('name trigger stats')
     .sort({ 'stats.dmSentCount': -1 })
     .limit(10);

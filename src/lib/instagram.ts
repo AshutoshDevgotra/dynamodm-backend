@@ -143,9 +143,9 @@ export async function getMedia(
 }
 
 /**
- * Returns whether an Instagram user follows the creator account.
- * The relationship endpoint is permission/version dependent; callers should
- * treat errors as "not confirmed" and never deliver gated resources.
+ * Returns whether an Instagram-scoped user follows the connected creator.
+ * The old /relationship endpoint is not part of the Instagram Login API.
+ * Instagram exposes this relationship on the participant profile instead.
  */
 export async function checkFollowerRelationship(
   igUserId: string,
@@ -153,15 +153,15 @@ export async function checkFollowerRelationship(
   accessToken: string
 ): Promise<boolean> {
   try {
-    const response = await axios.get(`${INSTAGRAM_API}/${igUserId}/relationship`, {
-      params: { user_id: recipientId, access_token: accessToken },
+    const response = await axios.get(`${INSTAGRAM_API}/${recipientId}`, {
+      params: { fields: 'is_user_follow_business', access_token: accessToken },
     });
-    const relationship = response.data?.data || response.data || {};
-    return relationship.followed_by === true
-      || relationship.incoming_status === 'followed_by'
-      || relationship.status === 'followed_by';
+    return response.data?.is_user_follow_business === true;
   } catch (error) {
-    logger.warn('Instagram follower relationship could not be confirmed; keeping the resource gated.');
+    logger.warn('Instagram follower relationship could not be confirmed.', {
+      recipientId,
+      message: (error as AxiosError)?.message,
+    });
     return false;
   }
 }

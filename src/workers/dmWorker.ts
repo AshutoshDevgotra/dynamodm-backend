@@ -3,7 +3,9 @@ import { sendInstagramDM } from '../engine/dmEngine';
 import { logger } from '../utils/logger';
 import mongoose from 'mongoose';
 
-const POLL_INTERVAL_MS = 2000;
+// Keep the normal queued-DM path comfortably below the requested 3–5 second
+// trigger window. The job itself is created immediately by the webhook.
+const POLL_INTERVAL_MS = 500;
 const LEASE_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_CONCURRENCY = 5;
 

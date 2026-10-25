@@ -5,6 +5,7 @@ import { Subscription } from '../../models/Subscription';
 import { AppError } from '../../middleware/errorHandler';
 import { PLANS } from '../../config/plans';
 import { CreatorAccount } from '../../models/CreatorAccount';
+import crypto from 'crypto';
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
@@ -15,7 +16,7 @@ type IAutomationTrigger = {
 type IAutomationFlowStep = IFlowStep;
 type IAutomationPublicReply = { enabled: boolean; message?: string; messages?: string[] };
 type IAutomationParsed = {
-  name: string; trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply;
+  trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply;
   aiFallback?: { enabled: boolean; instruction?: string }; excludedKeywords?: string[]; delaySeconds?: number;
   preDms?: { type: 'FOLLOW' | 'EMAIL'; message: string }[];
   primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
@@ -26,7 +27,7 @@ router.use(authenticate, requireActiveSubscription);
 
 const parseAutomationPayload = (body: any): IAutomationParsed => {
   const {
-    name,
+    name: _name,
     keyword,
     triggerType,
     targetPosts,
@@ -49,15 +50,16 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     trackButtonClicks,
   } = body;
 
-  if (!name) {
-    throw new AppError('Automation name is required.', 400);
-  }
-
   if (triggerFromBody && flowFromBody) {
+    const flow = (flowFromBody as IAutomationFlowStep[]).map((step) => ({
+      ...step,
+      ...(step.delaySeconds !== undefined
+        ? { delaySeconds: Math.min(60, Math.max(0, Math.floor(Number(step.delaySeconds) || 0))) }
+        : {}),
+    }));
     return {
-      name,
       trigger: triggerFromBody,
-      flow: flowFromBody,
+      flow,
       publicReply: {
         enabled: Boolean(body.publicReply?.enabled ?? sendPublicReply),
         message: String(body.publicReply?.message ?? publicReplyMessage ?? '').trim(),
@@ -108,7 +110,8 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
   if (ctaLink) dmContent += `\n\n${ctaLink}`;
 
   const flowSteps: IAutomationFlowStep[] = [];
-  const delay = typeof delaySeconds === 'number' ? delaySeconds : 0;
+  const requestedDelay = Number(delaySeconds);
+  const delay = Number.isFinite(requestedDelay) ? Math.min(60, Math.max(0, Math.floor(requestedDelay))) : 0;
   if (delay > 0) {
     flowSteps.push({ step: 1, type: 'DELAY', delaySeconds: delay });
   }
@@ -131,7 +134,6 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
   });
 
   return {
-    name,
     trigger,
     flow: flowSteps,
     publicReply: { enabled: publicReplyEnabled, message: publicReplyText, messages: publicReplyMessages },
@@ -142,6 +144,15 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     primaryDm: { type: primaryDmType === 'TEXT_BUTTON' ? 'TEXT_BUTTON' : 'TEXT', buttonLabel: String(buttonLabel || '').trim(), buttonUrl: String(buttonUrl || '').trim(), trackButtonClicks: Boolean(trackButtonClicks) },
   };
 };
+
+const AUTOMATION_NAME_PARTS = ['Welcome', 'Growth', 'Inbox', 'Connect', 'Engage', 'Creator', 'Reply', 'Launch'];
+
+async function generateAutomationName(account: { _id: unknown; igUsername?: string }, creatorId: string): Promise<string> {
+  const count = await Automation.countDocuments({ creatorId, instagramAccountId: account._id });
+  const sequence = String(count + 1).padStart(3, '0');
+  const part = AUTOMATION_NAME_PARTS[crypto.randomInt(AUTOMATION_NAME_PARTS.length)];
+  return `@${account.igUsername || 'Instagram'} · ${part} Flow ${sequence}`;
+}
 
 const formatAutomation = (auto: any) => {
   const doc = auto && auto.toObject ? auto.toObject() : auto;
@@ -177,13 +188,29 @@ const formatAutomation = (auto: any) => {
 
 // GET /api/automations
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automations = await Automation.find({ creatorId: req.user!.id }).sort({ createdAt: -1 });
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  if (!account?.igUserId) {
+    res.json({ success: true, data: { automations: [] } });
+    return;
+  }
+  // One-time compatibility migration for rules created before Instagram
+  // account binding was stored. It is scoped to this authenticated user, so
+  // it cannot expose another user's rules; once bound, account switching will
+  // keep the rule attached to its original Instagram account.
+  await Automation.updateMany(
+    { creatorId: req.user!.id, instagramAccountId: { $exists: false } },
+    { $set: { instagramAccountId: account._id, instagramUserId: account.igUserId } },
+  );
+  const filter: Record<string, unknown> = { creatorId: req.user!.id };
+  filter.instagramAccountId = account._id;
+  filter.instagramUserId = account.igUserId;
+  const automations = await Automation.find(filter).sort({ createdAt: -1 });
   res.json({ success: true, data: { automations: automations.map(formatAutomation) } });
 });
 
 // POST /api/automations
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
   if (!instagramAccount) {
     throw new AppError('Connect your Instagram account before creating an automation.', 409);
   }
@@ -205,6 +232,9 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
   const automation = await Automation.create({
     creatorId: req.user!.id,
+    instagramAccountId: instagramAccount._id,
+    instagramUserId: instagramAccount.igUserId,
+    name: await generateAutomationName(instagramAccount, req.user!.id),
     ...parsed,
   });
 
@@ -213,7 +243,8 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // GET /api/automations/:id
 router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id });
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
   if (!automation) throw new AppError('Automation not found.', 404);
   res.json({ success: true, data: { automation: formatAutomation(automation) } });
 });
@@ -221,10 +252,11 @@ router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 // PUT /api/automations/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const parsed = parseAutomationPayload(req.body);
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
 
   const automation = await Automation.findOneAndUpdate(
-    { _id: req.params.id, creatorId: req.user!.id },
-    { $set: parsed },
+    { _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId },
+    { $set: { ...parsed, ...(account ? { instagramAccountId: account._id, instagramUserId: account.igUserId } : {}) } },
     { new: true, runValidators: true }
   );
   if (!automation) throw new AppError('Automation not found.', 404);
@@ -233,7 +265,8 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // PATCH /api/automations/:id/toggle
 router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id });
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
   if (!automation) throw new AppError('Automation not found.', 404);
   automation.isActive = !automation.isActive;
   await automation.save();
@@ -242,7 +275,8 @@ router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<voi
 
 // DELETE /api/automations/:id
 router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const automation = await Automation.findOneAndDelete({ _id: req.params.id, creatorId: req.user!.id });
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const automation = await Automation.findOneAndDelete({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
   if (!automation) throw new AppError('Automation not found.', 404);
   res.json({ success: true, message: 'Automation deleted successfully.' });
 });

@@ -14,6 +14,8 @@ export interface IFlowStep {
 
 export interface IAutomation extends Document {
   creatorId: mongoose.Types.ObjectId;
+  instagramAccountId: mongoose.Types.ObjectId;
+  instagramUserId: string;
   name: string;
   trigger: {
     type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'LIVE_COMMENT' | 'DM';
@@ -43,7 +45,12 @@ export interface IAutomation extends Document {
 
 const AutomationSchema = new Schema<IAutomation>(
   {
-    creatorId: { type: Schema.Types.ObjectId, ref: 'CreatorAccount', required: true, index: true },
+    // creatorId is the authenticated User id used by every creator route.
+    creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    // Keep the connected Instagram identity on the rule as well. This prevents
+    // a rule from being reused when an account is switched or reconnected.
+    instagramAccountId: { type: Schema.Types.ObjectId, ref: 'CreatorAccount', required: false, index: true },
+    instagramUserId: { type: String, required: false, index: true },
     name: { type: String, required: true },
     trigger: {
       type: { type: String, enum: ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'LIVE_COMMENT', 'DM'], required: true },

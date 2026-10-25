@@ -127,7 +127,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     timestamp: new Date(),
   });
 
-    const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': { $in: ['COMMENT', 'LIVE_COMMENT', 'STORY_REPLY'] } });
+    const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': { $in: ['COMMENT', 'LIVE_COMMENT', 'STORY_REPLY'] } });
   logger.info(`🔍 Found ${rules.length} active COMMENT automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
@@ -304,10 +304,18 @@ async function handleFollowPostback(
   const match = msg.postback?.payload.match(/^FOLLOW_CHECK:([a-f0-9]{24})$/i);
   if (!match || !encryptedAccessToken) return;
 
-  const rule = await Automation.findOne({ _id: match[1], creatorId, isActive: true });
+  const rule = await Automation.findOne({ _id: match[1], creatorId, instagramUserId: igUserId, isActive: true });
   if (!rule || !igUsername) return;
 
-  const followsCreator = await checkFollowerRelationship(igUserId, msg.sender.id, decryptToken(encryptedAccessToken));
+  const accessToken = decryptToken(encryptedAccessToken);
+  // Instagram can take a moment to expose a newly-created follow. Retry the
+  // status check briefly so the confirmation button does not report a false
+  // negative immediately after the user follows.
+  let followsCreator = false;
+  for (let attempt = 0; attempt < 3 && !followsCreator; attempt += 1) {
+    followsCreator = await checkFollowerRelationship(igUserId, msg.sender.id, accessToken);
+    if (!followsCreator && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 900));
+  }
   const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
   if (!sendDmStep?.content) return;
 
@@ -337,7 +345,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
     timestamp: new Date(),
   });
 
-  const rules = await Automation.find({ creatorId, isActive: true, 'trigger.type': 'DM' });
+  const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': 'DM' });
   logger.info(`🔍 Found ${rules.length} active DM automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
