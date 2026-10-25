@@ -243,7 +243,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // GET /api/automations/:id
 router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
   const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
   if (!automation) throw new AppError('Automation not found.', 404);
   res.json({ success: true, data: { automation: formatAutomation(automation) } });
@@ -265,7 +265,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // PATCH /api/automations/:id/toggle
 router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id');
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
   const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
   if (!automation) throw new AppError('Automation not found.', 404);
   automation.isActive = !automation.isActive;
