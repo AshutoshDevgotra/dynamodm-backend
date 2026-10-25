@@ -31,7 +31,8 @@ const PaymentSchema = new Schema<IPayment>(
     razorpaySignature: { type: String, select: false },
     provider: { type: String, default: 'razorpay' },
     providerOrderId: { type: String, index: true },
-    providerPaymentId: { type: String, index: true, sparse: true },
+    // Indexed by the unique sparse schema index declared below.
+    providerPaymentId: { type: String, sparse: true },
     idempotencyKey: { type: String, index: true, sparse: true },
     plan: { type: String, enum: ['starter', 'pro', 'premium'], required: true },
     amount: { type: Number, required: true },
