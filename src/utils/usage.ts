@@ -11,7 +11,13 @@ export async function assertUsageAvailable(userId: string, kind: UsageKind): Pro
   if (!subscription || (subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now())) {
     throw new AppError('An active subscription is required to use this feature.', 402);
   }
-  const limit = kind === 'leads' ? PLANS[subscription.plan].leadsLimit : PLANS[subscription.plan].dmsLimit;
+  // Read the entitlement stored on the activated subscription. This keeps
+  // enforcement aligned with the exact plan purchased, while the PLANS
+  // fallback also supports older subscription documents created before the
+  // feature snapshot was introduced.
+  const limit = kind === 'leads'
+    ? (subscription.features?.maxLeads ?? PLANS[subscription.plan].leadsLimit)
+    : (subscription.features?.maxDmsPerMonth ?? PLANS[subscription.plan].dmsLimit);
   if (limit === -1) return;
 
   // Free usage resets monthly even though the free subscription has no paid billing period.

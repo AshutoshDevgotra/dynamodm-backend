@@ -25,17 +25,38 @@ const getRazorpayInstance = (): Razorpay => {
   return new Razorpay({ key_id: keyId, key_secret: keySecret });
 };
 
+const getSubscriptionFeatures = (plan: CheckoutPlan) => ({
+  maxAutomations: PLANS[plan].automationLimit,
+  maxLeads: PLANS[plan].leadsLimit,
+  maxDmsPerMonth: PLANS[plan].dmsLimit,
+  analyticsRetentionDays: PLANS[plan].analyticsRetentionDays,
+  prioritySupport: plan !== 'starter',
+  customBranding: plan === 'premium',
+});
+
 const activateCapturedSubscription = async (input: { userId: string; plan: CheckoutPlan; orderId: string; paymentId: string; signature?: string; amount: number; currency: string }) => {
-  const now = new Date();
-  const currentPeriodEnd = addOneMonth(now);
+  // Razorpay can deliver the browser callback and payment.captured webhook at
+  // the same time. Preserve the original period for the same order so a retry
+  // cannot grant an extra month.
+  const existingSubscription = await Subscription.findOne({ userId: input.userId });
+  const isSameOrder = existingSubscription?.providerOrderId === input.orderId;
+  const now = isSameOrder && existingSubscription?.startedAt ? existingSubscription.startedAt : new Date();
+  const currentPeriodStart = isSameOrder && existingSubscription?.currentPeriodStart
+    ? existingSubscription.currentPeriodStart
+    : now;
+  const currentPeriodEnd = isSameOrder && existingSubscription?.currentPeriodEnd
+    ? existingSubscription.currentPeriodEnd
+    : addOneMonth(now);
+
   const subscription = await Subscription.findOneAndUpdate(
     { userId: input.userId },
-    { userId: input.userId, plan: input.plan, status: 'active', provider: 'razorpay', providerOrderId: input.orderId, providerPaymentId: input.paymentId, startedAt: now, currentPeriodStart: now, currentPeriodEnd, cancelledAt: null, features: { maxAutomations: PLANS[input.plan].automationLimit, maxLeads: PLANS[input.plan].leadsLimit, maxDmsPerMonth: PLANS[input.plan].dmsLimit, analyticsRetentionDays: PLANS[input.plan].analyticsRetentionDays, prioritySupport: input.plan !== 'starter', customBranding: input.plan === 'premium' } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { $set: { userId: input.userId, plan: input.plan, status: 'active', provider: 'razorpay', providerOrderId: input.orderId, providerPaymentId: input.paymentId, startedAt: now, currentPeriodStart, currentPeriodEnd, cancelledAt: null, cancelAtPeriodEnd: false, features: getSubscriptionFeatures(input.plan) } },
+    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
   );
+
   await Payment.findOneAndUpdate(
     { userId: input.userId, providerOrderId: input.orderId },
-    { userId: input.userId, subscriptionId: subscription._id, plan: input.plan, provider: 'razorpay', providerOrderId: input.orderId, razorpayOrderId: input.orderId, razorpayPaymentId: input.paymentId, providerPaymentId: input.paymentId, ...(input.signature ? { razorpaySignature: input.signature } : {}), amount: input.amount, currency: input.currency, status: 'captured' },
+    { $set: { userId: input.userId, subscriptionId: subscription._id, plan: input.plan, provider: 'razorpay', providerOrderId: input.orderId, razorpayOrderId: input.orderId, razorpayPaymentId: input.paymentId, providerPaymentId: input.paymentId, ...(input.signature ? { razorpaySignature: input.signature } : {}), amount: input.amount, currency: input.currency, status: 'captured' } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   return subscription;
@@ -149,7 +170,7 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
   const plan = order?.notes?.plan as CheckoutPlan;
   if (order?.notes?.userId !== req.user!.id || !paidPlans.includes(plan)) throw new AppError('Payment order does not belong to this account.', 403);
   const settledPayment = await rzp.payments.fetch(razorpay_payment_id);
-  if (settledPayment?.order_id !== razorpay_order_id || settledPayment?.status !== 'captured' || settledPayment?.amount !== order.amount || settledPayment?.currency !== 'INR') {
+  if (order?.currency !== 'INR' || settledPayment?.order_id !== razorpay_order_id || settledPayment?.status !== 'captured' || settledPayment?.amount !== order.amount || settledPayment?.currency !== 'INR') {
     throw new AppError('Payment has not been captured and settled by Razorpay.', 402);
   }
   const subscription = await activateCapturedSubscription({ userId: req.user!.id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature, amount: order.amount, currency: order.currency });
@@ -161,10 +182,11 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
 // POST /api/payments/webhook (Razorpay webhooks — server-side events)
 router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   const signature = req.headers['x-razorpay-signature'] as string;
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim();
   const body = (req as any).rawBody || JSON.stringify(req.body);
-  const expected = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET || '').update(body).digest('hex');
+  const expected = webhookSecret ? crypto.createHmac('sha256', webhookSecret).update(body).digest('hex') : '';
 
-  if (!signature || expected.length !== signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+  if (!webhookSecret || !signature || expected.length !== signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
     logger.warn('⚠️ Invalid Razorpay webhook signature');
     res.status(400).json({ success: false });
     return;

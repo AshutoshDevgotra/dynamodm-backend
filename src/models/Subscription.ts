@@ -36,7 +36,7 @@ export interface ISubscription extends Document {
 const SubscriptionSchema = new Schema<ISubscription>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-    plan: { type: String, enum: ['free', 'pro', 'premium', 'enterprise'], default: 'free' },
+    plan: { type: String, enum: ['free', 'starter', 'pro', 'premium', 'enterprise'], default: 'free' },
     status: { type: String, enum: ['active', 'cancelled', 'expired', 'past_due', 'trialing', 'paused'], default: 'active' },
     provider: { type: String, default: 'manual' },
     providerOrderId: { type: String, index: true },
