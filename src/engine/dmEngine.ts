@@ -3,7 +3,7 @@ import { Automation } from '../models/AutomationRule';
 import { AnalyticsEvent } from '../models/AnalyticsEvent';
 import { CreatorAccount } from '../models/CreatorAccount';
 import { decryptToken } from '../modules/oauth/instagram';
-import { privateReplyToComment, sendDM } from '../lib/instagram';
+import { isInstagramSessionInvalidated, privateReplyToComment, sendDM } from '../lib/instagram';
 import { logger } from '../utils/logger';
 
 interface DMJobData {
@@ -30,7 +30,9 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('+igAccessToken');
   if (!account?.igAccessToken) {
     logger.error(`❌ Creator ${creatorId} has no connected account or token is missing`);
-    throw new Error('Creator Instagram account not connected or token missing.');
+    const reconnectError = new Error('Creator Instagram account not connected or token missing.');
+    (reconnectError as any).requiresReconnect = true;
+    throw reconnectError;
   }
 
   const accessToken = decryptToken(account.igAccessToken);
@@ -50,7 +52,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
       try {
         await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons);
       } catch (error) {
-        if (!buttons?.length) throw error;
+        if (!buttons?.length || isInstagramSessionInvalidated(error)) throw error;
         logger.warn('Interactive private reply failed; sending the plain-text fallback.', {
           commentId,
           recipientId,
@@ -85,6 +87,22 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
     const error = err as any;
     const errorMessage = error?.message || 'Unknown error';
     const httpStatus = error?.status;
+
+    if (isInstagramSessionInvalidated(error)) {
+      await CreatorAccount.findOneAndUpdate(
+        { userId: creatorId },
+        {
+          $set: {
+            isConnected: false,
+            reconnectRequired: true,
+            reconnectReason: 'Instagram session expired or was invalidated. Reconnect your Instagram account to resume automations.',
+          },
+          $unset: { igAccessToken: '', igTokenExpiresAt: '' },
+        },
+      );
+      logger.warn('Instagram session invalidated; reconnect is required.', { creatorId });
+      error.requiresReconnect = true;
+    }
 
     logger.error(`❌ DM send failed`, {
       recipientId,

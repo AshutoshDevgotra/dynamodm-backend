@@ -4,6 +4,13 @@ import { logger } from '../utils/logger';
 const INSTAGRAM_API = `https://graph.instagram.com/v23.0`;
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 
+export function isInstagramSessionInvalidated(error: unknown): boolean {
+  const message = String((error as any)?.message || '').toLowerCase();
+  return message.includes('session has been invalidated')
+    || (message.includes('error validating access token') && message.includes('password'))
+    || message.includes('invalid oauth access token');
+}
+
 export interface IGProfile {
   id: string;
   user_id?: string;

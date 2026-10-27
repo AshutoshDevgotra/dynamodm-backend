@@ -10,6 +10,8 @@ export interface ICreatorAccount extends Document {
   profilePic?: string;
   followersCount?: number;
   isConnected: boolean;
+  reconnectRequired?: boolean;
+  reconnectReason?: string;
   scopes: string[];
   profile: {
     bio?: string;
@@ -44,6 +46,8 @@ const CreatorAccountSchema = new Schema<ICreatorAccount>(
     profilePic: { type: String },
     followersCount: { type: Number, default: 0 },
     isConnected: { type: Boolean, default: false },
+    reconnectRequired: { type: Boolean, default: false },
+    reconnectReason: { type: String },
     scopes: [{ type: String }],
     profile: {
       bio: { type: String },

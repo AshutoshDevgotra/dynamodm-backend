@@ -186,6 +186,8 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       profilePic: igProfile.profile_picture_url,
       followersCount: igProfile.followers_count,
       isConnected: true,
+      reconnectRequired: false,
+      reconnectReason: '',
       scopes: [...INSTAGRAM_REQUIRED_SCOPES],
     };
 
@@ -284,6 +286,8 @@ router.delete('/disconnect', authenticate, requireActiveSubscription, async (req
         name: '',
         profilePic: '',
         followersCount: '',
+        reconnectRequired: '',
+        reconnectReason: '',
       },
     }
   );

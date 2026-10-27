@@ -47,14 +47,15 @@ async function processJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>
     logger.info(`DM job ${job.jobId} completed`);
   } catch (error: any) {
     const lastError = error?.message || 'Unknown DM job error';
-    const shouldRetry = job.attempts < job.maxAttempts;
+    const requiresReconnect = error?.requiresReconnect === true;
+    const shouldRetry = !requiresReconnect && job.attempts < job.maxAttempts;
 
     await DMJob.findByIdAndUpdate(job._id, {
       $set: {
-        status: shouldRetry ? 'queued' : 'failed',
+      status: shouldRetry ? 'queued' : 'failed',
         lockedAt: null,
         lastError,
-        nextAttemptAt: shouldRetry
+      nextAttemptAt: shouldRetry
           ? new Date(Date.now() + 5000 * 2 ** (job.attempts - 1))
           : new Date(),
       },
@@ -62,6 +63,7 @@ async function processJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>
     logger.error(`DM job ${job.jobId} ${shouldRetry ? 'scheduled for retry' : 'failed'}`, {
       attempt: job.attempts,
       error: lastError,
+      ...(requiresReconnect ? { requiresReconnect: true } : {}),
     });
   }
 }
