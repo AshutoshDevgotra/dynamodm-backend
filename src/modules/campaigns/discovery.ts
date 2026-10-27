@@ -16,10 +16,21 @@ router.get('/creators', authenticate, requirePaidSubscription, requireRole('bran
       filter['profile.niche'] = { $in: Array.isArray(niche) ? niche : [niche] };
     }
 
+    const parsedPage = Number.parseInt(page as string, 10);
+    const parsedLimit = Number.parseInt(limit as string, 10);
+    const safePage = Number.isFinite(parsedPage) ? Math.min(100000, Math.max(1, parsedPage)) : 1;
+    const safeLimit = Number.isFinite(parsedLimit) ? Math.min(50, Math.max(1, parsedLimit)) : 20;
+    const minFollowersValue = minFollowers ? Number.parseInt(minFollowers as string, 10) : undefined;
+    const maxFollowersValue = maxFollowers ? Number.parseInt(maxFollowers as string, 10) : undefined;
+    if ((minFollowers && !Number.isFinite(minFollowersValue)) || (maxFollowers && !Number.isFinite(maxFollowersValue))) {
+      res.status(400).json({ success: false, message: 'Follower filters must be valid numbers.' });
+      return;
+    }
+
     if (minFollowers || maxFollowers) {
       filter.followersCount = {};
-      if (minFollowers) filter.followersCount.$gte = parseInt(minFollowers as string, 10);
-      if (maxFollowers) filter.followersCount.$lte = parseInt(maxFollowers as string, 10);
+      if (minFollowersValue !== undefined) filter.followersCount.$gte = minFollowersValue;
+      if (maxFollowersValue !== undefined) filter.followersCount.$lte = maxFollowersValue;
     }
 
     if (targetAge && minAgePercentage) {
@@ -42,21 +53,22 @@ router.get('/creators', authenticate, requirePaidSubscription, requireRole('bran
 
     if (query) {
       const q = query as string;
+      const escapedQuery = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
       filter.$or = [
-        { name: { $regex: q, $options: 'i' } },
-        { username: { $regex: q, $options: 'i' } },
-        { 'profile.bio': { $regex: q, $options: 'i' } }
+        { name: { $regex: escapedQuery, $options: 'i' } },
+        { username: { $regex: escapedQuery, $options: 'i' } },
+        { 'profile.bio': { $regex: escapedQuery, $options: 'i' } }
       ];
     }
 
-    const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
+    const skip = (safePage - 1) * safeLimit;
 
     const [creators, total] = await Promise.all([
       CreatorAccount.find(filter)
         .select('userId name username followersCount profile')
         .sort({ followersCount: -1 }) // Sort by most followers by default
         .skip(skip)
-        .limit(parseInt(limit as string, 10)),
+        .limit(safeLimit),
       CreatorAccount.countDocuments(filter)
     ]);
 
@@ -66,9 +78,9 @@ router.get('/creators', authenticate, requirePaidSubscription, requireRole('bran
         creators,
         pagination: {
           total,
-          page: parseInt(page as string, 10),
-          limit: parseInt(limit as string, 10),
-          pages: Math.ceil(total / parseInt(limit as string, 10))
+          page: safePage,
+          limit: safeLimit,
+          pages: Math.ceil(total / safeLimit)
         }
       }
     });

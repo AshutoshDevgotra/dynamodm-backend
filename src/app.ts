@@ -31,7 +31,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ─── Security ──────────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({ referrerPolicy: { policy: 'no-referrer' } }));
 const frontendOrigins = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
   .filter((origin): origin is string => Boolean(origin?.trim()))
   .flatMap((origin) => origin.split(','))
@@ -53,18 +53,20 @@ app.use(cors({
 }));
 
 // ─── Parsing ───────────────────────────────────────────────────────────────────
-app.use(express.json({ 
-  limit: '10mb',
+app.use(express.json({
+  limit: '256kb',
   verify: (req: any, _res, buf) => {
     req.rawBody = buf.toString('utf8');
   }
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '64kb' }));
 app.use(cookieParser());
 
 // ─── Logging ───────────────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined'));
+  // Do not write OAuth codes, signed states, or other query-string secrets to
+  // access logs. Operational fields remain available for troubleshooting.
+  app.use(morgan(':remote-addr :method :status :res[content-length] - :response-time ms'));
 }
 
 // ─── Rate Limiting ─────────────────────────────────────────────────────────────

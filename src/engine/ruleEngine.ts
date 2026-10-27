@@ -54,10 +54,29 @@ interface WebhookPayload {
   }>;
 }
 
-function matchesKeyword(text: string, keywords: string[]): boolean {
+/**
+ * Instagram comments can contain non-breaking spaces, zero-width characters,
+ * composed/decomposed Unicode, and punctuation around the word. Normalize
+ * those variations so a human-visible trigger word reliably matches.
+ */
+function normalizeTriggerText(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .toLocaleLowerCase('en-US')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+export function matchesKeyword(text: string, keywords: string[]): boolean {
   if (!keywords || keywords.length === 0) return true; // match all
-  const normalizedText = text.toLowerCase().trim();
-  return keywords.some(keyword => normalizedText.includes(keyword.toLowerCase().trim()));
+  const normalizedText = normalizeTriggerText(text);
+  return keywords
+    .flatMap(keyword => normalizeTriggerText(keyword).split(','))
+    .map(keyword => keyword.trim())
+    .filter(Boolean)
+    .some(keyword => normalizedText.includes(keyword));
 }
 
 async function aiMatchesComment(text: string, instruction?: string): Promise<boolean> {
@@ -140,7 +159,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     }
 
     const excluded = rule.excludedKeywords || [];
-    if (excluded.some((keyword) => comment.text.toLowerCase().includes(keyword))) continue;
+    if (excluded.some((keyword) => matchesKeyword(comment.text, [keyword]))) continue;
     const keywordMatch = matchesKeyword(comment.text, rule.trigger.keywords);
     const aiMatch = !keywordMatch && rule.aiFallback?.enabled
       ? await aiMatchesComment(comment.text, rule.aiFallback.instruction)

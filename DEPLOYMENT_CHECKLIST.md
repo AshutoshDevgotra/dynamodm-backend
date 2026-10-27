@@ -31,7 +31,7 @@ ngrok http 3001
 curl -X GET "http://localhost:3001/api/instagram/callback?code=test&state=test"
 
 # 6. Test webhook verification
-curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=houseoforange_verify_123&hub.challenge=test"
+curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=<WEBHOOK_VERIFY_TOKEN>&hub.challenge=test"
 ```
 
 ## Pre-Deployment Env Vars Check ✅
@@ -40,9 +40,9 @@ curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub
 
 ```
 INSTAGRAM_APP_ID=1058417440231558
-INSTAGRAM_APP_SECRET=02fd5228f3ecce473491b99baf9eac4b
+INSTAGRAM_APP_SECRET=<set-in-secret-manager>
 INSTAGRAM_REDIRECT_URI=https://dynamodm-backend.onrender.com/api/instagram/callback
-WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
+WEBHOOK_VERIFY_TOKEN=<set-in-secret-manager>
 FRONTEND_URL=https://automation.houseoforange.in
 ENCRYPTION_KEY=<your_32_char_hex_key>
 ```
@@ -92,7 +92,7 @@ Go to: https://developers.facebook.com/apps/1065638836355573/instagram-basic-dis
 
 **Webhooks:**
 - Webhook Callback URL: `https://dynamodm-backend.vercel.app/api/webhooks/instagram`
-- Verify Token: `houseoforange_verify_123`
+- Verify Token: `<WEBHOOK_VERIFY_TOKEN>`
 
 Click "Verify and Save"
 

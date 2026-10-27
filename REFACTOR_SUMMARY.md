@@ -126,9 +126,9 @@ META_API_VERSION
 ### Added (must be in Vercel)
 ```
 INSTAGRAM_APP_ID=1058417440231558
-INSTAGRAM_APP_SECRET=02fd5228f3ecce473491b99baf9eac4b
+INSTAGRAM_APP_SECRET=<set-in-secret-manager>
 INSTAGRAM_REDIRECT_URI=https://dynamodm-frontend.vercel.app/api/instagram/callback
-WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
+WEBHOOK_VERIFY_TOKEN=<set-in-secret-manager>
 FRONTEND_URL=https://dynamodm-frontend.vercel.app
 ```
 

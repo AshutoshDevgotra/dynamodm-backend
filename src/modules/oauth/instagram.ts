@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
 import mongoose from 'mongoose';
+import jwt from 'jsonwebtoken';
 import { authenticate, requireActiveSubscription, AuthRequest } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { AppError } from '../../middleware/errorHandler';
@@ -57,15 +58,19 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
 
  router.get('/login', authenticate, requireActiveSubscription, (req: AuthRequest, res: Response): void => {
   const token = req.headers.authorization?.startsWith('Bearer ')
-    ? req.headers.authorization.slice(7)
-    : req.cookies?.token || (typeof req.query.token === 'string' ? req.query.token : '');
+    ? req.headers.authorization.slice(7).trim()
+    : '';
   if (!token) throw new AppError('A valid session is required to connect Instagram.', 401);
   const redirectUri = getInstagramCallbackUrl();
   logger.info('Starting Instagram OAuth flow', { redirectUri });
   const authUrl = buildInstagramBusinessLoginUrl({
     clientId: process.env.INSTAGRAM_APP_ID as string,
     redirectUri,
-    state: token,
+    state: jwt.sign(
+      { sub: req.user!.id, purpose: 'instagram_oauth', nonce: crypto.randomBytes(16).toString('hex') },
+      process.env.JWT_SECRET as string,
+      { expiresIn: '10m' },
+    ),
   });
 
   res.json({ success: true, data: { authUrl } });
@@ -120,9 +125,9 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 
   let userId = '';
   try {
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.verify(state, process.env.JWT_SECRET as string) as { id: string };
-    userId = decoded.id;
+    const decoded = jwt.verify(state, process.env.JWT_SECRET as string) as { sub?: string; purpose?: string };
+    if (decoded.purpose !== 'instagram_oauth' || !decoded.sub) throw new Error('Invalid OAuth state');
+    userId = decoded.sub;
   } catch (err) {
     res.status(401).send('Access denied. Invalid or missing session token in state.');
     return;

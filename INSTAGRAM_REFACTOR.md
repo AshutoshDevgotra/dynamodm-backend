@@ -22,18 +22,18 @@ This document describes the complete refactor from **Facebook Login + Graph API*
 ```bash
 # Instagram OAuth (2025 Flow)
 INSTAGRAM_APP_ID=1058417440231558
-INSTAGRAM_APP_SECRET=02fd5228f3ecce473491b99baf9eac4b  # Reset after testing!
+INSTAGRAM_APP_SECRET=<set-in-secret-manager>
 INSTAGRAM_REDIRECT_URI=https://dynamodm-frontend.vercel.app/api/instagram/callback
 
 # Webhooks
-WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
+WEBHOOK_VERIFY_TOKEN=<set-in-secret-manager>
 
 # Frontend URL (used in OAuth callbacks)
 FRONTEND_URL=https://dynamodm-frontend.vercel.app
 
 # For local testing with ngrok:
 # INSTAGRAM_REDIRECT_URI=http://your-ngrok-url.ngrok.io/api/instagram/callback
-# WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
+# WEBHOOK_VERIFY_TOKEN=<set-in-secret-manager>
 ```
 
 ### Update Vercel Deployment
@@ -165,7 +165,7 @@ ngrok http 3001
    - Valid OAuth Redirect URIs: `http://abc123.ngrok.io/api/instagram/callback`
 3. Instagram Messaging
    - Webhook Callback URL: `http://abc123.ngrok.io/api/webhooks/instagram`
-   - Verify Token: `houseoforange_verify_123`
+   - Verify Token: `<WEBHOOK_VERIFY_TOKEN>`
 4. Click "Verify and Save"
 
 ### 4. Test OAuth Flow
@@ -176,7 +176,7 @@ ngrok http 3001
 
 ### 5. Test Webhook Verification
 ```bash
-curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=houseoforange_verify_123&hub.challenge=test_challenge"
+curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=<WEBHOOK_VERIFY_TOKEN>&hub.challenge=test_challenge"
 ```
 
 Expected response: `test_challenge` (HTTP 200)
@@ -199,7 +199,7 @@ git push origin master
    - Valid OAuth Redirect URIs: `https://dynamodm-frontend.vercel.app/api/instagram/callback`
 3. Instagram Messaging
    - Webhook Callback URL: `https://dynamodm-frontend.vercel.app/api/webhooks/instagram`
-   - Verify Token: `houseoforange_verify_123`
+   - Verify Token: `<WEBHOOK_VERIFY_TOKEN>`
 4. Click "Verify and Save"
 
 ### 3. Verify in Dashboard
@@ -216,7 +216,7 @@ git push origin master
 export TEST_IG_USER_ID=17841456534142359
 export TEST_IG_USERNAME=algoadjusted
 export TEST_IG_ACCESS_TOKEN="your_long_lived_token_here"
-export WEBHOOK_VERIFY_TOKEN=houseoforange_verify_123
+export WEBHOOK_VERIFY_TOKEN=<set-in-secret-manager>
 
 npx ts-node test-instagram-api.ts
 ```
@@ -241,7 +241,7 @@ curl -X POST "https://graph.instagram.com/v23.0/17841456534142359/messages" \
 
 #### 3. Verify Webhook
 ```bash
-curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=houseoforange_verify_123&hub.challenge=my_test_challenge"
+curl -X GET "http://localhost:3001/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=<WEBHOOK_VERIFY_TOKEN>&hub.challenge=my_test_challenge"
 # Response: my_test_challenge (HTTP 200)
 ```
 

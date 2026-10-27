@@ -7,14 +7,19 @@ router.use(authenticate, requireActiveSubscription);
 
 // GET /api/leads?page=1&limit=20&source=comment
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 20;
+  const parsedPage = Number.parseInt(req.query.page as string, 10);
+  const parsedLimit = Number.parseInt(req.query.limit as string, 10);
+  const page = Number.isFinite(parsedPage) ? Math.min(100000, Math.max(1, parsedPage)) : 1;
+  const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 20;
   const source = req.query.source as string | undefined;
   const search = req.query.search as string | undefined;
 
   const query: Record<string, unknown> = { creatorId: req.user!.id };
   if (source) query.source = source;
-  if (search) query.$or = [{ username: new RegExp(search, 'i') }, { name: new RegExp(search, 'i') }, { email: new RegExp(search, 'i') }];
+  if (search) {
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
+    query.$or = [{ username: new RegExp(escapedSearch, 'i') }, { name: new RegExp(escapedSearch, 'i') }, { email: new RegExp(escapedSearch, 'i') }];
+  }
 
   const [leads, total] = await Promise.all([
     Lead.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
@@ -27,10 +32,16 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 // GET /api/leads/export
 router.get('/export', async (req: AuthRequest, res: Response): Promise<void> => {
   const leads = await Lead.find({ creatorId: req.user!.id }).sort({ createdAt: -1 }).limit(10000);
+  const csvCell = (value: unknown) => {
+    const text = String(value ?? '');
+    // Quote every field and neutralize spreadsheet formula execution.
+    const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text;
+    return `"${safeText.replace(/"/g, '""')}"`;
+  };
   const csv = [
     'Username,Name,Email,Phone,Source,Comment,Converted,Date',
     ...leads.map((l) =>
-      [l.username, l.name, l.email, l.phone, l.source, l.commentText, l.isConverted, l.createdAt.toISOString()].join(',')
+      [l.username, l.name, l.email, l.phone, l.source, l.commentText, l.isConverted, l.createdAt.toISOString()].map(csvCell).join(','),
     ),
   ].join('\n');
 

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 
 import { User, IUser } from '../../models/User';
@@ -224,11 +225,11 @@ router.get('/google', (req: Request, res: Response): void => {
   const plan = typeof req.query.plan === 'string' ? req.query.plan : '';
   const requestedRedirect = typeof req.query.redirect === 'string' ? req.query.redirect : '';
   const safeRedirect = requestedRedirect.startsWith('/') && !requestedRedirect.startsWith('//') ? requestedRedirect : '';
-  const state = [
-    'placeholder',
-    plan ? `plan=${encodeURIComponent(plan)}` : '',
-    safeRedirect ? `redirect=${encodeURIComponent(safeRedirect)}` : '',
-  ].filter(Boolean).join('|');
+  const state = jwt.sign(
+    { purpose: 'google_oauth', nonce: crypto.randomBytes(16).toString('hex'), plan: plan || undefined, redirect: safeRedirect || undefined },
+    process.env.JWT_SECRET as string,
+    { expiresIn: '10m' },
+  );
   const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID as string, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'profile email', access_type: 'offline', prompt: 'select_account', state });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
@@ -258,24 +259,26 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   const clientUrl = getFrontendUrl();
 
-  let planRedirect = '';
-  let requestedRedirect = '';
+  let stateData: { purpose?: string; plan?: string; redirect?: string };
   try {
-    const stateParts = oauthState?.split('|');
-    for (const statePart of stateParts?.slice(1) || []) {
-      if (statePart.startsWith('plan=')) {
-        planRedirect = `&plan=${encodeURIComponent(decodeURIComponent(statePart.slice(5)))}`;
-      }
-      if (statePart.startsWith('redirect=')) {
-        const candidate = decodeURIComponent(statePart.slice(9));
-        if (candidate.startsWith('/') && !candidate.startsWith('//')) requestedRedirect = candidate;
-      }
-    }
-  } catch {}
+    stateData = jwt.verify(oauthState || '', process.env.JWT_SECRET as string) as typeof stateData;
+    if (stateData.purpose !== 'google_oauth') throw new Error('Invalid OAuth state');
+  } catch {
+    throw new AppError('Invalid or expired OAuth state.', 401);
+  }
+
+  const requestedRedirect = stateData.redirect && stateData.redirect.startsWith('/') && !stateData.redirect.startsWith('//')
+    ? stateData.redirect
+    : '';
 
   const destination = requestedRedirect || (user.role === 'BRAND' ? '/brand/dashboard' : user.role === 'ADMIN' ? '/admin' : '/creator');
-  const separator = destination.includes('?') ? '&' : '?';
-  res.redirect(`${clientUrl}${destination}${separator}token=${encodeURIComponent(token)}${requestedRedirect ? '' : planRedirect}`);
+  // Put the access token in the URL fragment. Fragments are not sent in HTTP
+  // requests or referrer headers, unlike query-string tokens.
+  const fragment = new URLSearchParams({
+    token,
+    ...(requestedRedirect ? {} : (stateData.plan ? { plan: stateData.plan } : {})),
+  }).toString();
+  res.redirect(`${clientUrl}${destination}#${fragment}`);
 });
 
 router.get('/instagram', (req: Request, res: Response): void => {

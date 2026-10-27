@@ -10,7 +10,13 @@ const PORT = process.env.PORT || 3001;
 
 async function bootstrap() {
   try {
-    if (!process.env.JWT_SECRET?.trim()) throw new Error('JWT_SECRET is required to start the backend.');
+    const requiredSecrets = ['JWT_SECRET'];
+    if (process.env.NODE_ENV === 'production') requiredSecrets.push('ENCRYPTION_KEY', 'RAZORPAY_WEBHOOK_SECRET');
+    const missingSecrets = requiredSecrets.filter((name) => !process.env[name]?.trim());
+    if (missingSecrets.length) throw new Error(`Required security secrets are missing: ${missingSecrets.join(', ')}`);
+    if (process.env.NODE_ENV === 'production' && !/^[a-f0-9]{64}$/i.test(process.env.ENCRYPTION_KEY!.trim())) {
+      throw new Error('ENCRYPTION_KEY must be exactly 32 bytes encoded as 64 hexadecimal characters in production.');
+    }
     await connectDB();
     startWorker();
     app.listen(PORT, () => {

@@ -22,6 +22,14 @@ type IAutomationParsed = {
   primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
 };
 
+const normalizeKeywords = (value: unknown): string[] => {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .flatMap((item) => String(item ?? '').split(','))
+    .map((item) => item.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim())
+    .filter(Boolean);
+};
+
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
 
@@ -57,8 +65,9 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
         ? { delaySeconds: Math.min(60, Math.max(0, Math.floor(Number(step.delaySeconds) || 0))) }
         : {}),
     }));
+    const triggerType = String(triggerFromBody.type || '').toUpperCase() as IAutomationTrigger['type'];
     return {
-      trigger: triggerFromBody,
+      trigger: { ...triggerFromBody, type: triggerType, keywords: normalizeKeywords(triggerFromBody.keywords) },
       flow,
       publicReply: {
         enabled: Boolean(body.publicReply?.enabled ?? sendPublicReply),
@@ -100,7 +109,7 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
 
   const trigger: IAutomationTrigger = {
     type: triggerTypeUpper,
-    keywords: keyword ? (Array.isArray(keyword) ? keyword : [keyword]) : [],
+    keywords: normalizeKeywords(keyword),
     ...(targetPosts && Array.isArray(targetPosts) && targetPosts.length > 0
       ? { postId: targetPosts[0] }
       : {}),

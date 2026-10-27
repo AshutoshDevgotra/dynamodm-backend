@@ -10,8 +10,8 @@ router.use(authenticate, requirePaidSubscription, requireRole('brand'));
 // Uses Gemini to process a natural language search, converts to vector, and searches Atlas
 router.post('/ai-match', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { query } = req.body;
-    if (!query) {
+    const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+    if (!query || query.length > 1000) {
       res.status(400).json({ success: false, message: 'Search query is required' });
       return;
     }

@@ -10,7 +10,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, callback) => {
-    callback(null, file.mimetype.startsWith('image/'));
+    callback(null, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype));
   },
 });
 
@@ -35,13 +35,22 @@ router.post('/', authenticate, upload.single('image'), async (req: AuthRequest, 
   if (!['AFFILIATE', 'DIGITAL_PRODUCT', 'SERVICE', 'COURSE'].includes(type)) throw new AppError('Invalid product type.', 400);
 
   const file = req.file;
+  const validateHttpUrl = (value: string | undefined, field: string) => {
+    if (!value) return undefined;
+    let parsed: URL;
+    try { parsed = new URL(value); } catch { throw new AppError(`${field} must be a valid URL.`, 400); }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new AppError(`${field} must use HTTP or HTTPS.`, 400);
+    return parsed.toString();
+  };
+  const safeOriginalUrl = validateHttpUrl(originalUrl.trim(), 'Buying link');
+  const safeImageUrl = validateHttpUrl(imageUrl?.trim(), 'Image URL');
   const product = await Product.create({
     creatorId: creator._id,
     type,
     title: title.trim(),
     description: description?.trim(),
-    originalUrl: originalUrl.trim(),
-    imageUrl: imageUrl?.trim(),
+    originalUrl: safeOriginalUrl,
+    imageUrl: safeImageUrl,
     ...(file ? { imageData: file.buffer, imageMimeType: file.mimetype, imageFileName: file.originalname } : {}),
   });
 

@@ -15,9 +15,13 @@ const generateShortCode = () => crypto.randomBytes(4).toString('hex');
 router.post('/generate', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   const { originalUrl, productId, customCode } = req.body;
   
-  if (!originalUrl) {
+  if (typeof originalUrl !== 'string' || !originalUrl.trim()) {
     throw new AppError('Original URL is required.', 400);
   }
+
+  let parsedUrl: URL;
+  try { parsedUrl = new URL(originalUrl.trim()); } catch { throw new AppError('Original URL must be valid.', 400); }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new AppError('Only HTTP and HTTPS links are allowed.', 400);
 
   const shortCode = customCode || generateShortCode();
 
@@ -33,7 +37,7 @@ router.post('/generate', authenticate, requirePaidSubscription, async (req: Auth
     creatorId: req.user!.id,
     productId: productId || null,
     shortCode,
-    originalUrl,
+    originalUrl: parsedUrl.toString(),
     clicks: 0,
     isActive: true
   });

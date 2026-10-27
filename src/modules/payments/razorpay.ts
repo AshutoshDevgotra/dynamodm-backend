@@ -3,6 +3,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { authenticate, requirePaidSubscription, AuthRequest, requireRole } from '../../middleware/auth';
 import { CreatorAccount } from '../../models/CreatorAccount';
+import { Brand } from '../../models/Brand';
 import { BrandCampaign } from '../../models/BrandCampaign';
 import { Transaction } from '../../models/Transaction';
 import { AppError } from '../../middleware/errorHandler';
@@ -62,14 +63,19 @@ router.post('/onboard', authenticate, requirePaidSubscription, requireRole('crea
 router.post('/create-order', authenticate, requireRole('brand'), async (req: AuthRequest, res: Response): Promise<void> => {
   const { campaignId, amount } = req.body;
 
-  const campaign = await BrandCampaign.findById(campaignId);
+  const brand = await Brand.findOne({ userId: req.user!.id }).select('_id');
+  const campaign = await BrandCampaign.findOne({ _id: campaignId, brandId: brand?._id });
   if (!campaign) throw new AppError('Campaign not found', 404);
+  const amountInr = Number(amount);
+  if (!Number.isFinite(amountInr) || amountInr <= 0 || amountInr > 100000000 || !Number.isInteger(amountInr * 100)) {
+    throw new AppError('Amount must be a valid positive INR amount.', 400);
+  }
 
   const rzp = getRazorpayInstance();
 
   try {
     const order = await rzp.orders.create({
-      amount: amount * 100, // Razorpay uses paise
+      amount: Math.round(amountInr * 100), // Razorpay uses paise
       currency: 'INR',
       receipt: `camp_${campaignId}`,
       notes: { campaignId }
@@ -81,10 +87,10 @@ router.post('/create-order', authenticate, requireRole('brand'), async (req: Aut
       brandId: campaign.brandId,
       razorpayOrderId: order.id,
       type: 'DEPOSIT',
-      amount: amount * 100,
+      amount: Math.round(amountInr * 100),
       currency: 'INR',
       platformFee: 0,
-      netAmount: amount * 100,
+      netAmount: Math.round(amountInr * 100),
       status: 'PENDING'
     });
 
@@ -98,6 +104,10 @@ router.post('/create-order', authenticate, requireRole('brand'), async (req: Aut
 router.post('/transfer', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response): Promise<void> => {
   const { creatorId, amount, campaignId } = req.body;
 
+  const amountInr = Number(amount);
+  if (!Number.isFinite(amountInr) || amountInr <= 0 || amountInr > 100000000 || !Number.isInteger(amountInr * 100)) {
+    throw new AppError('Amount must be a valid positive INR amount.', 400);
+  }
   const creator = await CreatorAccount.findById(creatorId);
   if (!creator) throw new AppError('Creator not found', 404);
 
@@ -105,7 +115,7 @@ router.post('/transfer', authenticate, requireRole('admin'), async (req: AuthReq
   if (!accountId) throw new AppError('Creator has not onboarded with Razorpay', 400);
 
   const rzp = getRazorpayInstance();
-  const totalAmountPaise = amount * 100;
+  const totalAmountPaise = Math.round(amountInr * 100);
   
   // 5% Platform Fee deducted from payout
   const platformFeePaise = Math.round(totalAmountPaise * 0.05);
@@ -139,16 +149,23 @@ router.post('/transfer', authenticate, requireRole('admin'), async (req: AuthReq
 
 // ─── POST /api/payments/webhook ───────────────────────────────────────────────
 router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim();
   const signature = req.headers['x-razorpay-signature'] as string;
+
+  if (!secret || !signature) {
+    res.status(400).send('Invalid signature');
+    return;
+  }
 
   const shasum = crypto.createHmac('sha256', secret);
   // Need raw body for correct signature calculation, assuming express.json uses a verification callback to store rawBody
   const rawBody = (req as any).rawBody || JSON.stringify(req.body);
   shasum.update(rawBody);
   const digest = shasum.digest('hex');
+  const digestBuffer = Buffer.from(digest);
+  const signatureBuffer = Buffer.from(signature);
 
-  if (digest !== signature) {
+  if (digestBuffer.length !== signatureBuffer.length || !crypto.timingSafeEqual(digestBuffer, signatureBuffer)) {
     res.status(400).send('Invalid signature');
     return;
   }

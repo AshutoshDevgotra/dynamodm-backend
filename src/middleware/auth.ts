@@ -8,8 +8,10 @@ export type AuthRequest = any;
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
-    const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.cookies?.token || queryToken);
+    // Never accept bearer tokens in URLs or cookies. URLs are routinely copied
+    // into browser history, proxy logs, analytics, and referrer headers; a
+    // cookie fallback would also make state-changing routes CSRF-prone.
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
 
     if (!token) {
       res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
