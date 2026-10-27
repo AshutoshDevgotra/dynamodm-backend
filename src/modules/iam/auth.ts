@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 
 import { User, IUser } from '../../models/User';
 import { Subscription } from '../../models/Subscription';
+import { hasUnlimitedAccess } from '../../config/access';
 import { Brand } from '../../models/Brand';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { Automation } from '../../models/AutomationRule';
@@ -156,11 +157,13 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
   const user = await User.findById(req.user!.id);
   if (!user) throw new AppError('User not found.', 404);
   const subscription = await Subscription.findOne({ userId: req.user!.id });
+  const unlimitedAccess = hasUnlimitedAccess(req.user);
   const subscriptionData = subscription ? {
-    plan: subscription.plan,
-    status: subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now() && subscription.status === 'active' ? 'expired' : subscription.status,
+    plan: unlimitedAccess ? 'enterprise' : subscription.plan,
+    status: unlimitedAccess ? 'active' : subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now() && subscription.status === 'active' ? 'expired' : subscription.status,
     currentPeriodEnd: subscription.currentPeriodEnd || null,
-  } : null;
+    isUnlimited: unlimitedAccess,
+  } : unlimitedAccess ? { plan: 'enterprise', status: 'active', currentPeriodEnd: null, isUnlimited: true } : null;
   res.json({ success: true, data: { user: safeUser(user), subscription: subscriptionData } });
 });
 

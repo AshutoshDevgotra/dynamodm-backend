@@ -6,6 +6,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { PLANS } from '../../config/plans';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import crypto from 'crypto';
+import { hasUnlimitedAccess } from '../../config/access';
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
@@ -230,7 +231,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const maxAutomations = subscription ? PLANS[subscription.plan].automationLimit : 1;
   const count = await Automation.countDocuments({ creatorId: req.user!.id });
 
-  if (maxAutomations !== -1 && count >= maxAutomations) {
+  if (!hasUnlimitedAccess(req.user) && maxAutomations !== -1 && count >= maxAutomations) {
     if (!subscription) {
       throw new AppError('Free plan allows 1 automation. Upgrade to Pro or Premium to add more.', 402);
     }

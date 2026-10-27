@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
 import { Subscription } from '../models/Subscription';
+import { hasUnlimitedAccess } from '../config/access';
 
 export type AuthRequest = any;
 
@@ -39,6 +40,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
  * Attach this after `authenticate` on paid-only routes.
  */
 export const requireSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   if (!subscription || subscription.status !== 'active') {
     res.status(402).json({
@@ -53,7 +55,7 @@ export const requireSubscription = async (req: AuthRequest, res: Response, next:
 };
 
 export const requirePaidSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  if (req.user?.role?.toUpperCase() === 'ADMIN') { next(); return; }
+  if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
   const paid = subscription && ['starter', 'pro', 'premium', 'enterprise'].includes(subscription.plan) && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
@@ -72,6 +74,7 @@ export const requirePaidSubscription = async (req: AuthRequest, res: Response, n
 
 /** Allows the active Free workspace as well as paid plans. */
 export const requireActiveSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
   const active = subscription && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
@@ -79,8 +82,8 @@ export const requireActiveSubscription = async (req: AuthRequest, res: Response,
     res.status(402).json({
       success: false,
       code: 'SUBSCRIPTION_REQUIRED',
-      message: 'An active subscription is required to use this feature.',
-      data: { redirect: '/creator/payments/subscriptions' },
+      message: 'Your free trial or subscription has ended. Please upgrade your plan to continue.',
+      data: { redirect: '/creator/payments/subscriptions?reason=trial_expired' },
     });
     return;
   }

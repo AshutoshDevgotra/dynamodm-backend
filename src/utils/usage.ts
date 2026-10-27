@@ -3,10 +3,15 @@ import { Lead } from '../models/Lead';
 import { Subscription } from '../models/Subscription';
 import { PLANS } from '../config/plans';
 import { AppError } from '../middleware/errorHandler';
+import { User } from '../models/User';
+import { hasUnlimitedAccess } from '../config/access';
 
 type UsageKind = 'leads' | 'dms';
 
 export async function assertUsageAvailable(userId: string, kind: UsageKind): Promise<void> {
+  const user = await User.findById(userId).select('email role').lean();
+  if (hasUnlimitedAccess(user || undefined)) return;
+
   const subscription = await Subscription.findOne({ userId, status: 'active' });
   if (!subscription || (subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now())) {
     throw new AppError('An active subscription is required to use this feature.', 402);
