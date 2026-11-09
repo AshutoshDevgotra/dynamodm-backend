@@ -9,6 +9,7 @@ import { decryptToken } from '../modules/oauth/instagram';
 import { checkFollowerRelationship, publicReplyToComment } from '../lib/instagram';
 import crypto from 'crypto';
 import { assertUsageAvailable } from '../utils/usage';
+import { bypassesCoolingPeriod } from '../config/access';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 interface CommentEvent {
@@ -33,6 +34,25 @@ function followButtons(ruleId: string, igUsername: string): FollowButton[] {
     { type: 'web_url', title: 'Follow us', url: `https://www.instagram.com/${igUsername}/` },
     { type: 'postback', title: 'Already followed', payload: `FOLLOW_CHECK:${ruleId}` },
   ];
+}
+
+function resolvePrimaryButtons(rule: IAutomation): { type: 'web_url'; title: string; url: string }[] | undefined {
+  if (rule.primaryDm?.buttons?.length) {
+    const valid = rule.primaryDm.buttons
+      .filter((b) => b?.title?.trim() && b?.url?.trim())
+      .slice(0, 3)
+      .map((b) => ({ type: 'web_url' as const, title: b.title.trim().substring(0, 20), url: b.url.trim() }));
+    if (valid.length > 0) return valid;
+  }
+  if (rule.primaryDm?.buttonUrl?.trim() && rule.primaryDm?.buttonLabel?.trim()) {
+    return [{ type: 'web_url' as const, title: rule.primaryDm.buttonLabel.trim().substring(0, 20), url: rule.primaryDm.buttonUrl.trim() }];
+  }
+  const legacyCta = (rule as any).ctaLink?.trim();
+  if (legacyCta) {
+    const label = (rule.primaryDm?.buttonLabel?.trim() || 'Open Link').substring(0, 20);
+    return [{ type: 'web_url' as const, title: label, url: legacyCta }];
+  }
+  return undefined;
 }
 
 interface WebhookPayload {
@@ -196,7 +216,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       status: { $in: ['queued', 'sent'] },
       createdAt: { $gte: cooldownSince },
     });
-    if (recentDM) {
+    if (recentDM && !bypassesCoolingPeriod(comment.from.id)) {
       logger.info(`⏭️ Skipping rule ${rule._id} — user ${comment.from.id} is in cooldown`);
       continue;
     }
@@ -263,12 +283,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       commentId: comment.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
-      // Use buttons configured on primaryDm if present
-      buttons: rule.primaryDm?.buttons?.length
-        ? rule.primaryDm.buttons.map((b) => ({ type: 'web_url' as const, title: b.title!, url: b.url! }))
-        : rule.primaryDm?.buttonUrl && rule.primaryDm?.buttonLabel
-        ? [{ type: 'web_url' as const, title: rule.primaryDm.buttonLabel, url: rule.primaryDm.buttonUrl }]
-        : undefined,
+      buttons: resolvePrimaryButtons(rule),
       automationRuleId: rule._id.toString(),
       nextAttemptAt: new Date(Date.now() + (rule.delaySeconds || sendDmStep.delaySeconds || 0) * 1000),
     });
@@ -344,6 +359,8 @@ async function handleFollowPostback(
   const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
   if (!sendDmStep?.content) return;
 
+  const primaryButtons = resolvePrimaryButtons(rule);
+
   const jobId = crypto.randomBytes(16).toString('hex');
   await queueCommentDM({
     creatorId,
@@ -353,7 +370,7 @@ async function handleFollowPostback(
     message: followsCreator ? sendDmStep.content : 'You have not followed us. Kindly follow us from this button.',
     commentText: '',
     jobId,
-    buttons: followsCreator ? undefined : followButtons(rule._id.toString(), igUsername),
+    buttons: followsCreator ? primaryButtons : followButtons(rule._id.toString(), igUsername),
   });
   logger.info(`${followsCreator ? '✅ Follow confirmed; primary DM' : '⏭️ Follow still missing; reminder sent'} for ${msg.sender.id}`);
 }
@@ -386,7 +403,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
         status: { $in: ['queued', 'sent'] },
         createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) },
       });
-      if (recentDM) {
+      if (recentDM && !bypassesCoolingPeriod(fromId)) {
         logger.info(`⏭️ Skipping rule ${rule._id} — user ${fromId} is in cooldown`);
         continue;
     }
@@ -426,18 +443,20 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
       messageText: messageToSend, status: 'queued',
     });
 
+      const primaryButtons = resolvePrimaryButtons(rule);
+
       const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:${messageId}`).digest('hex');
       await DMJob.create({
         jobId,
-      dmLogId: dmLog._id.toString(),
-      creatorId, igUserId,
-      recipientId: fromId,
-      message: messageToSend,
-        buttons: !followsCreator && igUsername ? followButtons(rule._id.toString(), igUsername) : undefined,
-      attachmentUrl: sendDmStep.attachment,
-      automationRuleId: rule._id.toString(),
+        dmLogId: dmLog._id.toString(),
+        creatorId, igUserId,
+        recipientId: fromId,
+        message: messageToSend,
+        buttons: !followsCreator && igUsername ? followButtons(rule._id.toString(), igUsername) : primaryButtons,
+        attachmentUrl: sendDmStep.attachment,
+        automationRuleId: rule._id.toString(),
         nextAttemptAt: new Date(),
-    });
+      });
 
       await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
       logger.info(`📤 DM job ${jobId} queued for ${fromId} (rule ${rule._id})`);
