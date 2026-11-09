@@ -182,7 +182,21 @@ export async function sendDM(
 ): Promise<{ mid: string }> {
   try {
     const messagePayload = buttons?.length
-      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
+      ? {
+          attachment: {
+            type: 'template',
+            payload: {
+              template_type: 'generic',
+              elements: [
+                {
+                  title: message.substring(0, 80), // Instagram limits title to 80 chars
+                  subtitle: message.length > 80 ? message.substring(80, 160) : undefined, // Use remaining text as subtitle
+                  buttons: buttons.slice(0, 3), // Max 3 buttons per element
+                },
+              ],
+            },
+          },
+        }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
@@ -208,7 +222,21 @@ export async function privateReplyToComment(
 ): Promise<{ mid: string }> {
   try {
     const messagePayload = buttons?.length
-      ? { attachment: { type: 'template', payload: { template_type: 'button', text: message, buttons } } }
+      ? {
+          attachment: {
+            type: 'template',
+            payload: {
+              template_type: 'generic',
+              elements: [
+                {
+                  title: message.substring(0, 80), // Instagram limits title to 80 chars
+                  subtitle: message.length > 80 ? message.substring(80, 160) : undefined, // Use remaining text as subtitle
+                  buttons: buttons.slice(0, 3), // Max 3 buttons per element
+                },
+              ],
+            },
+          },
+        }
       : { text: message };
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
