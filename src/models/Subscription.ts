@@ -29,6 +29,12 @@ export interface ISubscription extends Document {
     prioritySupport: boolean;
     customBranding: boolean;
   };
+  // Campaign / introductory pricing fields
+  campaignId?: string;             // e.g. 'diwali-extended-2026'
+  introductoryPriceInr?: number;   // Discounted price charged for intro cycles
+  regularPriceInr?: number;        // Full price after intro period ends
+  introductoryCycles?: number;     // Total intro billing cycles granted
+  completedCycles?: number;        // Billing cycles already completed
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +56,12 @@ const SubscriptionSchema = new Schema<ISubscription>(
     currentPeriodEnd: { type: Date },
     cancelAtPeriodEnd: { type: Boolean, default: false },
     trialEnd: { type: Date },
+    // Campaign / introductory pricing
+    campaignId: { type: String, index: true },
+    introductoryPriceInr: { type: Number },
+    regularPriceInr: { type: Number },
+    introductoryCycles: { type: Number },
+    completedCycles: { type: Number, default: 0 },
     features: {
       maxAutomations: { type: Number },
       maxLeads: { type: Number },

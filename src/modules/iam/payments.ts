@@ -11,6 +11,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { CheckoutPlan, PLANS, paidPlans } from '../../config/plans';
 import { addOneMonth, verifyRazorpaySignature } from '../../utils/razorpay';
+import { getCampaignOfferPrice, SERVER_CAMPAIGN } from '../../config/campaign';
 
 const router = Router();
 
@@ -34,7 +35,7 @@ const getSubscriptionFeatures = (plan: CheckoutPlan) => ({
   customBranding: plan === 'premium',
 });
 
-const activateCapturedSubscription = async (input: { userId: string; plan: CheckoutPlan; orderId: string; paymentId: string; signature?: string; amount: number; currency: string }) => {
+const activateCapturedSubscription = async (input: { userId: string; plan: CheckoutPlan; orderId: string; paymentId: string; signature?: string; amount: number; currency: string; campaignId?: string; introductoryPriceInr?: number; regularPriceInr?: number; introductoryCycles?: number }) => {
   // Razorpay can deliver the browser callback and payment.captured webhook at
   // the same time. Preserve the original period for the same order so a retry
   // cannot grant an extra month.
@@ -48,9 +49,21 @@ const activateCapturedSubscription = async (input: { userId: string; plan: Check
     ? existingSubscription.currentPeriodEnd
     : addOneMonth(now);
 
+  // Track introductory cycle completion — only increment if this is a new order
+  const previousCycles = existingSubscription?.completedCycles ?? 0;
+  const completedCycles = isSameOrder ? previousCycles : previousCycles + 1;
+
+  const campaignFields = input.campaignId ? {
+    campaignId: input.campaignId,
+    introductoryPriceInr: input.introductoryPriceInr,
+    regularPriceInr: input.regularPriceInr,
+    introductoryCycles: input.introductoryCycles,
+    completedCycles,
+  } : {};
+
   const subscription = await Subscription.findOneAndUpdate(
     { userId: input.userId },
-    { $set: { userId: input.userId, plan: input.plan, status: 'active', provider: 'razorpay', providerOrderId: input.orderId, providerPaymentId: input.paymentId, startedAt: now, currentPeriodStart, currentPeriodEnd, cancelledAt: null, cancelAtPeriodEnd: false, features: getSubscriptionFeatures(input.plan) } },
+    { $set: { userId: input.userId, plan: input.plan, status: 'active', provider: 'razorpay', providerOrderId: input.orderId, providerPaymentId: input.paymentId, startedAt: now, currentPeriodStart, currentPeriodEnd, cancelledAt: null, cancelAtPeriodEnd: false, features: getSubscriptionFeatures(input.plan), ...campaignFields } },
     { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
   );
 
@@ -123,14 +136,29 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
   const plan = req.body?.plan as CheckoutPlan;
   if (!paidPlans.includes(plan) || !PLANS[plan].selfServeCheckout) throw new AppError('Invalid plan selected.', 400);
   const planConfig = PLANS[plan];
-  const amount = (planConfig.monthlyPriceInr as number) * 100;
+
+  // Apply campaign introductory pricing if eligible
+  const campaignOffer = getCampaignOfferPrice(plan);
+  const amount = campaignOffer
+    ? campaignOffer.offerPriceInr * 100
+    : (planConfig.monthlyPriceInr as number) * 100;
+
   let order: any;
   try {
     order = await (getRazorpayInstance().orders.create as Function)({
       amount,
       currency: 'INR',
       receipt: `rcpt_${req.user!.id.slice(-8)}_${Date.now().toString().slice(-8)}`,
-      notes: { userId: req.user!.id, plan },
+      notes: {
+        userId: req.user!.id,
+        plan,
+        ...(campaignOffer ? {
+          campaignId: SERVER_CAMPAIGN.campaignId,
+          introductoryPriceInr: String(campaignOffer.offerPriceInr),
+          regularPriceInr: String(campaignOffer.regularPriceInr),
+          introductoryCycles: String(campaignOffer.introductoryCycles),
+        } : {}),
+      },
     });
   } catch (razorErr: any) {
     const errMsg = razorErr?.error?.description || razorErr?.message || 'Razorpay order creation failed';
@@ -146,6 +174,13 @@ router.post('/create-order', authenticate, async (req: AuthRequest, res: Respons
       currency: 'INR',
       keyId: process.env.RAZORPAY_KEY_ID,
       planName: plan[0].toUpperCase() + plan.slice(1),
+      // Expose campaign pricing details so the frontend can display correct terms
+      campaign: campaignOffer ? {
+        campaignId: SERVER_CAMPAIGN.campaignId,
+        offerPriceInr: campaignOffer.offerPriceInr,
+        regularPriceInr: campaignOffer.regularPriceInr,
+        introductoryCycles: campaignOffer.introductoryCycles,
+      } : null,
     },
   });
 });
@@ -173,7 +208,16 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
   if (order?.currency !== 'INR' || settledPayment?.order_id !== razorpay_order_id || settledPayment?.status !== 'captured' || settledPayment?.amount !== order.amount || settledPayment?.currency !== 'INR') {
     throw new AppError('Payment has not been captured and settled by Razorpay.', 402);
   }
-  const subscription = await activateCapturedSubscription({ userId: req.user!.id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature, amount: order.amount, currency: order.currency });
+
+  // Extract campaign fields from order notes (set during create-order)
+  const campaignArgs = order?.notes?.campaignId ? {
+    campaignId: order.notes.campaignId as string,
+    introductoryPriceInr: Number(order.notes.introductoryPriceInr),
+    regularPriceInr: Number(order.notes.regularPriceInr),
+    introductoryCycles: Number(order.notes.introductoryCycles),
+  } : {};
+
+  const subscription = await activateCapturedSubscription({ userId: req.user!.id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature, amount: order.amount, currency: order.currency, ...campaignArgs });
 
   logger.info(`✅ Payment verified and subscription activated for user ${req.user!.id} (plan: ${subscription.plan})`);
   res.json({ success: true, data: { plan: subscription.plan, status: 'active', currentPeriodEnd: subscription.currentPeriodEnd } });
@@ -203,7 +247,13 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
       const plan = order?.notes?.plan as CheckoutPlan;
       const userId = order?.notes?.userId;
       if (userId && paidPlans.includes(plan) && payment.status === 'captured' && payment.amount === order.amount && payment.currency === 'INR') {
-        await activateCapturedSubscription({ userId, plan, orderId: payment.order_id, paymentId: payment.id, amount: payment.amount, currency: payment.currency });
+        const campaignArgs = order?.notes?.campaignId ? {
+          campaignId: order.notes.campaignId as string,
+          introductoryPriceInr: Number(order.notes.introductoryPriceInr),
+          regularPriceInr: Number(order.notes.regularPriceInr),
+          introductoryCycles: Number(order.notes.introductoryCycles),
+        } : {};
+        await activateCapturedSubscription({ userId, plan, orderId: payment.order_id, paymentId: payment.id, amount: payment.amount, currency: payment.currency, ...campaignArgs });
       }
     }
   }
