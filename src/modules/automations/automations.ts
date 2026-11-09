@@ -34,7 +34,13 @@ type IAutomationParsed = {
   trigger: IAutomationTrigger; flow: IAutomationFlowStep[]; publicReply: IAutomationPublicReply;
   aiFallback?: { enabled: boolean; instruction?: string }; excludedKeywords?: string[]; delaySeconds?: number;
   preDms?: { type: 'FOLLOW' | 'EMAIL'; message: string }[];
-  primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
+  primaryDm?: {
+    type: 'TEXT' | 'TEXT_BUTTON';
+    buttonLabel?: string;
+    buttonUrl?: string;
+    trackButtonClicks?: boolean;
+    buttons?: { type: 'web_url'; title: string; url: string }[];
+  };
 };
 
 const normalizeKeywords = (value: unknown): string[] => {
@@ -192,7 +198,7 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
       buttonUrl: normalizedButtons[0]?.url || String(buttonUrl || '').trim(),
       trackButtonClicks: Boolean(trackButtonClicks),
       buttons: normalizedButtons,
-    } as any,
+    },
   };
 };
 

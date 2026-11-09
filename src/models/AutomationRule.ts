@@ -32,7 +32,13 @@ export interface IAutomation extends Document {
   excludedKeywords?: string[];
   delaySeconds?: number;
   preDms?: { type: 'FOLLOW' | 'EMAIL'; message: string }[];
-  primaryDm?: { type: 'TEXT' | 'TEXT_BUTTON'; buttonLabel?: string; buttonUrl?: string; trackButtonClicks?: boolean };
+  primaryDm?: {
+    type: 'TEXT' | 'TEXT_BUTTON';
+    buttonLabel?: string;
+    buttonUrl?: string;
+    trackButtonClicks?: boolean;
+    buttons?: { type: 'web_url'; title: string; url: string }[];
+  };
   isActive: boolean;
   stats: {
     triggeredCount: number;
@@ -75,7 +81,17 @@ const AutomationSchema = new Schema<IAutomation>(
     excludedKeywords: { type: [String], default: [] },
     delaySeconds: { type: Number, default: 0 },
     preDms: [{ type: { type: String, enum: ['FOLLOW', 'EMAIL'] }, message: String }],
-    primaryDm: { type: { type: String, enum: ['TEXT', 'TEXT_BUTTON'] }, buttonLabel: String, buttonUrl: String, trackButtonClicks: Boolean },
+    primaryDm: {
+      type: { type: String, enum: ['TEXT', 'TEXT_BUTTON'] },
+      buttonLabel: String,
+      buttonUrl: String,
+      trackButtonClicks: Boolean,
+      buttons: [{
+        type: { type: String, enum: ['web_url'], default: 'web_url' },
+        title: String,
+        url: String,
+      }],
+    },
     isActive: { type: Boolean, default: true },
     stats: {
       triggeredCount: { type: Number, default: 0 },

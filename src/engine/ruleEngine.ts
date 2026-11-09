@@ -264,8 +264,8 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       // Use buttons configured on primaryDm if present
-      buttons: (rule.primaryDm as any)?.buttons?.length
-        ? (rule.primaryDm as any).buttons
+      buttons: rule.primaryDm?.buttons?.length
+        ? rule.primaryDm.buttons.map((b) => ({ type: 'web_url' as const, title: b.title!, url: b.url! }))
         : rule.primaryDm?.buttonUrl && rule.primaryDm?.buttonLabel
         ? [{ type: 'web_url' as const, title: rule.primaryDm.buttonLabel, url: rule.primaryDm.buttonUrl }]
         : undefined,
