@@ -1,12 +1,26 @@
 import { Router, Response } from 'express';
+import multer from 'multer';
 import { authenticate, requireActiveSubscription, AuthRequest } from '../../middleware/auth';
 import { Automation, IFlowStep } from '../../models/AutomationRule';
+import { AutomationAttachment } from '../../models/AutomationAttachment';
 import { Subscription } from '../../models/Subscription';
 import { AppError } from '../../middleware/errorHandler';
 import { PLANS } from '../../config/plans';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import crypto from 'crypto';
 import { hasUnlimitedAccess } from '../../config/access';
+
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    ];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
@@ -57,6 +71,8 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     buttonLabel,
     buttonUrl,
     trackButtonClicks,
+    attachmentUrl,
+    buttons,
   } = body;
 
   if (triggerFromBody && flowFromBody) {
@@ -135,10 +151,22 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     });
   }
 
+  // Normalise buttons array — up to 3 web_url buttons from the form
+  type ButtonDef = { type: 'web_url'; title: string; url: string };
+  const normalizedButtons: ButtonDef[] = Array.isArray(buttons)
+    ? (buttons as any[])
+        .filter((b) => b?.title?.trim() && b?.url?.trim())
+        .slice(0, 3)
+        .map((b) => ({ type: 'web_url' as const, title: String(b.title).trim(), url: String(b.url).trim() }))
+    : buttonUrl?.trim() && buttonLabel?.trim()
+    ? [{ type: 'web_url' as const, title: String(buttonLabel).trim(), url: String(buttonUrl).trim() }]
+    : [];
+
   flowSteps.push({
     step: flowSteps.length + 1,
     type: 'SEND_DM',
     content: dmContent,
+    ...(attachmentUrl?.trim() ? { attachment: String(attachmentUrl).trim() } : {}),
     ...(delay > 0 ? { delaySeconds: delay } : {}),
     role: 'PRIMARY',
   });
@@ -151,7 +179,13 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     excludedKeywords: String(excludedKeywords || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
     delaySeconds: delay,
     preDms: Array.isArray(preDms) ? preDms.slice(0, 2).map((item: any) => ({ type: (item.type === 'EMAIL' ? 'EMAIL' : 'FOLLOW') as 'FOLLOW' | 'EMAIL', message: String(item.message || '').trim() })).filter((item: any) => item.message) : [],
-    primaryDm: { type: primaryDmType === 'TEXT_BUTTON' ? 'TEXT_BUTTON' : 'TEXT', buttonLabel: String(buttonLabel || '').trim(), buttonUrl: String(buttonUrl || '').trim(), trackButtonClicks: Boolean(trackButtonClicks) },
+    primaryDm: {
+      type: normalizedButtons.length > 0 ? 'TEXT_BUTTON' : (primaryDmType === 'TEXT_BUTTON' ? 'TEXT_BUTTON' : 'TEXT'),
+      buttonLabel: normalizedButtons[0]?.title || String(buttonLabel || '').trim(),
+      buttonUrl: normalizedButtons[0]?.url || String(buttonUrl || '').trim(),
+      trackButtonClicks: Boolean(trackButtonClicks),
+      buttons: normalizedButtons,
+    } as any,
   };
 };
 
@@ -281,6 +315,38 @@ router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<voi
   automation.isActive = !automation.isActive;
   await automation.save();
   res.json({ success: true, data: { automation, isActive: automation.isActive } });
+});
+
+// POST /api/automations/attachment — upload a PDF or image for use in a DM
+router.post('/attachment', attachmentUpload.single('file'), async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.file) throw new AppError('No file uploaded or file type not allowed (PDF, JPEG, PNG, GIF, WEBP, max 10 MB).', 400);
+  const attachment = await AutomationAttachment.create({
+    creatorId: req.user!.id,
+    originalName: req.file.originalname,
+    mimeType: req.file.mimetype,
+    size: req.file.size,
+    data: req.file.buffer,
+  });
+  res.status(201).json({
+    success: true,
+    data: {
+      attachmentId: attachment._id.toString(),
+      name: attachment.originalName,
+      size: attachment.size,
+      mimeType: attachment.mimeType,
+      url: `/api/automations/attachment/${attachment._id}`,
+    },
+  });
+});
+
+// GET /api/automations/attachment/:id — serve the file (authenticated; same creator only)
+router.get('/attachment/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+  const attachment = await AutomationAttachment.findOne({ _id: req.params.id, creatorId: req.user!.id });
+  if (!attachment) throw new AppError('Attachment not found.', 404);
+  res.set('Content-Type', attachment.mimeType);
+  res.set('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.originalName)}"`);
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.send(attachment.data);
 });
 
 // DELETE /api/automations/:id

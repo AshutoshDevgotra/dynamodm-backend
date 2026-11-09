@@ -263,6 +263,12 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       commentId: comment.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
+      // Use buttons configured on primaryDm if present
+      buttons: (rule.primaryDm as any)?.buttons?.length
+        ? (rule.primaryDm as any).buttons
+        : rule.primaryDm?.buttonUrl && rule.primaryDm?.buttonLabel
+        ? [{ type: 'web_url' as const, title: rule.primaryDm.buttonLabel, url: rule.primaryDm.buttonUrl }]
+        : undefined,
       automationRuleId: rule._id.toString(),
       nextAttemptAt: new Date(Date.now() + (rule.delaySeconds || sendDmStep.delaySeconds || 0) * 1000),
     });
