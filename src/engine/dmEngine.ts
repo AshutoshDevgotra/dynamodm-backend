@@ -38,8 +38,12 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   const accessToken = decryptToken(account.igAccessToken);
   logger.info(`🔑 Token decrypted for creator ${creatorId}`);
 
+  // Only append ctaLink as plain text when there are no interactive buttons.
+  // When buttons are present the URL lives inside the button payload —
+  // appending it to the message body causes Instagram to send plain text
+  // instead of the button template.
   let messageText = message;
-  if (ctaLink) messageText += `\n\n${ctaLink}`;
+  if (ctaLink && !buttons?.length) messageText += `\n\n${ctaLink}`;
 
   logger.info(`📡 Sending DM via Instagram API`, {
     igUserId,

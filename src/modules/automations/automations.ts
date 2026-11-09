@@ -132,8 +132,15 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
       : {}),
   };
 
+  // Only bake ctaLink into the message text when no interactive buttons are
+  // configured. When buttons are present, the URL lives inside the button
+  // payload — appending it to the text would cause Instagram to send the
+  // URL as plain text instead of rendering the button template.
+  const hasButtons = Array.isArray(buttons)
+    ? (buttons as any[]).some((b) => b?.title?.trim() && b?.url?.trim())
+    : Boolean(buttonUrl?.trim() && buttonLabel?.trim());
   let dmContent = responseMessage as string;
-  if (ctaLink) dmContent += `\n\n${ctaLink}`;
+  if (ctaLink && !hasButtons) dmContent += `\n\n${ctaLink}`;
 
   const flowSteps: IAutomationFlowStep[] = [];
   const requestedDelay = Number(delaySeconds);
