@@ -32,6 +32,7 @@ export interface IGMedia {
   comments_count?: number;
   timestamp?: string;
   media_type?: string;
+  media_product_type?: string;
 }
 
 export interface IGShortLivedToken {
@@ -132,7 +133,7 @@ export async function getMedia(
   igUserId: string,
   accessToken: string,
   limit = 30,
-  fields = 'id,caption,media_url,thumbnail_url,permalink,like_count,comments_count,timestamp,media_type'
+  fields = 'id,caption,media_url,thumbnail_url,permalink,like_count,comments_count,timestamp,media_type,media_product_type'
 ): Promise<IGMedia[]> {
   try {
     const response = await axios.get(`${INSTAGRAM_API}/${igUserId}/media`, {

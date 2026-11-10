@@ -55,7 +55,7 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
       access_token: accessToken,
     },
   });
-  logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
+  logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comment, live-comment, story-reply, and message webhooks`);
 }
 
 router.get('/login', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {

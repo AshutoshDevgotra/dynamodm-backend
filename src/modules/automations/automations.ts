@@ -43,6 +43,8 @@ type IAutomationParsed = {
   };
 };
 
+const postTargetTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT'];
+
 const normalizeKeywords = (value: unknown): string[] => {
   const values = Array.isArray(value) ? value : [value];
   return values
@@ -119,8 +121,19 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
         : {}),
     }));
     const triggerType = String(triggerFromBody.type || '').toUpperCase() as IAutomationTrigger['type'];
+    const normalizedTrigger = {
+      ...triggerFromBody,
+      type: triggerType,
+      keywords: normalizeKeywords(triggerFromBody.keywords),
+    };
+    if (!(['COMMENT', 'KEYWORD', 'STORY_REPLY', 'LIVE_COMMENT', 'DM'] as string[]).includes(triggerType)) {
+      throw new AppError(`Invalid trigger type "${triggerType}".`, 400);
+    }
+    if (postTargetTriggerTypes.includes(triggerType) && !String(normalizedTrigger.postId || '').trim()) {
+      throw new AppError('Select a target post or reel before saving this automation.', 400);
+    }
     return {
-      trigger: { ...triggerFromBody, type: triggerType, keywords: normalizeKeywords(triggerFromBody.keywords) },
+      trigger: normalizedTrigger,
       flow,
       publicReply: {
         enabled: Boolean(body.publicReply?.enabled ?? sendPublicReply),
@@ -145,11 +158,11 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
   const triggerTypeUpper = (triggerAlias[String(triggerType).toLowerCase()] || String(triggerType).toUpperCase()) as IAutomationTrigger['type'];
   const validTriggerTypes: IAutomationTrigger['type'][] = ['COMMENT', 'KEYWORD', 'STORY_REPLY', 'LIVE_COMMENT', 'DM'];
   if (!validTriggerTypes.includes(triggerTypeUpper)) {
-    throw new AppError(`Invalid triggerType "${triggerType}". Must be one of: comment, keyword, story_reply, dm.`, 400);
+    throw new AppError(`Invalid triggerType "${triggerType}". Choose post/reel comments, live comments, story replies, or direct messages.`, 400);
   }
 
-  if ((triggerTypeUpper === 'KEYWORD' || triggerTypeUpper === 'LIVE_COMMENT') && !keyword) {
-    throw new AppError(`keyword is required when triggerType is "${triggerType}".`, 400);
+  if (normalizeKeywords(keyword).length === 0) {
+    throw new AppError('Add at least one trigger word before saving this automation.', 400);
   }
 
   if (!responseMessage) {
@@ -165,11 +178,16 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     throw new AppError('Add at least 2 public reply variants when public replies are enabled.', 400);
   }
 
+  const selectedTargetPost = targetPosts && Array.isArray(targetPosts) ? String(targetPosts[0] || '').trim() : '';
+  if (postTargetTriggerTypes.includes(triggerTypeUpper) && !selectedTargetPost) {
+    throw new AppError('Select a target post or reel before saving this automation.', 400);
+  }
+
   const trigger: IAutomationTrigger = {
     type: triggerTypeUpper,
     keywords: normalizeKeywords(keyword),
-    ...(targetPosts && Array.isArray(targetPosts) && targetPosts.length > 0
-      ? { postId: targetPosts[0] }
+    ...(selectedTargetPost
+      ? { postId: selectedTargetPost }
       : {}),
   };
 
@@ -252,7 +270,6 @@ const formatAutomation = (auto: any) => {
     excludedKeywords: doc.excludedKeywords || [],
     preDms: doc.preDms || [],
     primaryDm: doc.primaryDm || { type: 'TEXT' },
-    matchType: 'contains',
     stats: {
       triggered: doc.stats?.triggeredCount ?? doc.stats?.triggered ?? 0,
       dmsSent: doc.stats?.dmSentCount ?? doc.stats?.dmsSent ?? 0,

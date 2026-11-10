@@ -17,13 +17,20 @@ interface CommentEvent {
   text: string;
   id: string;
   media?: { id: string };
+  triggerType?: 'COMMENT' | 'LIVE_COMMENT' | 'STORY_REPLY';
 }
 
 export interface DMMessage {
   sender: { id: string };
   recipient: { id: string };
   timestamp: number;
-  message?: { mid: string; text?: string; is_echo?: boolean };
+  message?: {
+    mid: string;
+    text?: string;
+    is_echo?: boolean;
+    attachments?: Array<{ type?: string; payload?: { url?: string } }>;
+    reply_to?: { story?: { id?: string; url?: string } };
+  };
   postback?: { title?: string; payload: string };
 }
 
@@ -128,15 +135,22 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     // Process comment changes
     if (entry.changes) {
       for (const change of entry.changes) {
-        if (change.field === 'comments' || change.field === 'feed') {
+        if (['comments', 'feed', 'live_comments', 'live_comment', 'story_replies', 'story_reply'].includes(change.field)) {
           const commentData = change.value;
           if ((!commentData.verb || commentData.verb === 'add') && commentData.from && commentData.text) {
             const mediaId = commentData.media?.id || (commentData as any).media_id;
+            const mediaProductType = String((commentData.media as any)?.media_product_type || (commentData.media as any)?.product_type || '').toUpperCase();
+            const triggerType = change.field.startsWith('live_') || mediaProductType === 'LIVE'
+              ? 'LIVE_COMMENT'
+              : change.field.startsWith('story_')
+              ? 'STORY_REPLY'
+              : 'COMMENT';
             const comment: CommentEvent = {
               from: commentData.from,
               text: commentData.text,
               id: commentData.id || '',
               media: mediaId ? { id: mediaId } : undefined,
+              triggerType,
             };
             await handleComment(creatorId, creatorAccount.igUserId!, comment, creatorAccount.igAccessToken, creatorAccount.igUsername);
           }
@@ -152,6 +166,17 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
           continue;
         }
         if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
+        const storyId = msg.message.reply_to?.story?.id || (msg.message.attachments || []).find((attachment) => attachment.type === 'story_reply' || attachment.type === 'story')?.payload?.url;
+        if (storyId) {
+          await handleComment(creatorId, creatorAccount.igUserId!, {
+            from: { id: msg.sender.id },
+            text: msg.message.text,
+            id: msg.message.mid || crypto.randomBytes(8).toString('hex'),
+            media: { id: String(storyId) },
+            triggerType: 'STORY_REPLY',
+          }, creatorAccount.igAccessToken, creatorAccount.igUsername);
+          continue;
+        }
         await handleDM(creatorId, creatorAccount.igUserId!, msg, creatorAccount.igAccessToken, creatorAccount.igUsername);
       }
     }
@@ -166,14 +191,16 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     timestamp: new Date(),
   });
 
-    const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': { $in: ['COMMENT', 'LIVE_COMMENT', 'STORY_REPLY'] } });
+  const eventTriggerType = comment.triggerType || 'COMMENT';
+  const ruleTriggerTypes = eventTriggerType === 'COMMENT' ? ['COMMENT', 'KEYWORD'] : [eventTriggerType];
+  const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': { $in: ruleTriggerTypes } });
   logger.info(`🔍 Found ${rules.length} active COMMENT automation(s) for creator ${creatorId}`);
 
   for (const rule of rules) {
     // Normalise postId comparison — Meta can return numeric strings
     const rulePostId = rule.trigger.postId ? String(rule.trigger.postId) : null;
     const commentPostId = comment.media?.id ? String(comment.media.id) : null;
-    if (rulePostId && commentPostId && rulePostId !== commentPostId) {
+    if (eventTriggerType === 'COMMENT' && (!rulePostId || !commentPostId || rulePostId !== commentPostId)) {
       logger.info(`⏭️ Skipping rule ${rule._id} — postId mismatch (rule: ${rulePostId}, comment: ${commentPostId})`);
       continue;
     }
@@ -197,7 +224,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       continue;
     }
 
-    if (rule.publicReply?.enabled && rule.publicReply.message && comment.id && encryptedAccessToken) {
+    if (eventTriggerType !== 'STORY_REPLY' && rule.publicReply?.enabled && rule.publicReply.message && comment.id && encryptedAccessToken) {
       try {
         const publicMessages = rule.publicReply.messages?.length ? rule.publicReply.messages : [rule.publicReply.message];
         const index = comment.id.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % publicMessages.length;
