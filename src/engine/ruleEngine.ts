@@ -279,6 +279,10 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     for (const [index, preDm] of (rule.preDms || []).entries()) {
       await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: preDm.message, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId: `${jobId}:pre:${index}` });
     }
+    if (rule.preDms?.some((item) => item.type === 'EMAIL')) {
+      logger.info(`📧 Email collection requested before primary DM for ${comment.from.id}`);
+      continue;
+    }
 
     const existingLead = await Lead.exists({ creatorId, instagramUserId: comment.from.id });
     if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
@@ -361,6 +365,55 @@ async function queueCommentDM(input: {
   await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
 }
 
+async function queuePrimaryAfterEmail(input: {
+  creatorId: string;
+  igUserId: string;
+  recipientId: string;
+  rule: IAutomation;
+  messageId: string;
+}): Promise<void> {
+  const { creatorId, igUserId, recipientId, rule, messageId } = input;
+  const sendDmStep = rule.flow.find((step) => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
+  if (!sendDmStep?.content) return;
+
+  const lead = await Lead.findOne({ creatorId, instagramUserId: recipientId, automationRuleId: rule._id });
+  if (!lead) return;
+
+  const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:email:${messageId}`).digest('hex');
+  if (await DMJob.exists({ jobId })) return;
+  await assertUsageAvailable(creatorId, 'dms');
+  const dmLog = await DMLog.create({
+    creatorId,
+    leadId: lead._id,
+    automationRuleId: rule._id,
+    instagramUserId: recipientId,
+    instagramUsername: lead.username,
+    messageText: sendDmStep.content,
+    status: 'queued',
+  });
+  await DMJob.create({
+    jobId,
+    dmLogId: dmLog._id.toString(),
+    creatorId,
+    igUserId,
+    recipientId,
+    message: sendDmStep.content,
+    attachmentUrl: sendDmStep.attachment,
+    buttons: resolvePrimaryButtons(rule),
+    automationRuleId: rule._id.toString(),
+    nextAttemptAt: new Date(),
+  });
+  await DMLog.findByIdAndUpdate(dmLog._id, { jobId });
+  await AnalyticsEvent.create({
+    creatorId,
+    eventType: 'automation_triggered',
+    automationRuleId: rule._id,
+    leadId: lead._id,
+    metadata: { emailCaptured: true },
+    timestamp: new Date(),
+  });
+}
+
 async function handleFollowPostback(
   creatorId: string,
   igUserId: string,
@@ -385,6 +438,22 @@ async function handleFollowPostback(
   }
   const sendDmStep = rule.flow.find(step => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
   if (!sendDmStep?.content) return;
+
+  if (followsCreator && rule.preDms?.some((item) => item.type === 'EMAIL')) {
+    for (const [index, preDm] of rule.preDms.entries()) {
+      await queueCommentDM({
+        creatorId,
+        igUserId,
+        recipientId: msg.sender.id,
+        rule,
+        message: preDm.message,
+        commentText: '',
+        jobId: `${crypto.randomBytes(16).toString('hex')}:pre:${index}`,
+      });
+    }
+    logger.info(`📧 Email collection requested after follow confirmation for ${msg.sender.id}`);
+    return;
+  }
 
   const primaryButtons = resolvePrimaryButtons(rule);
 
@@ -426,6 +495,14 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
       { $set: { email: emailMatch, source: 'manual' }, $setOnInsert: { creatorId, instagramUserId: fromId, username: 'Unknown' } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+    const pendingLead = await Lead.findOne({ creatorId, instagramUserId: fromId, automationRuleId: { $exists: true } });
+    if (pendingLead?.automationRuleId) {
+      const pendingRule = await Automation.findOne({ _id: pendingLead.automationRuleId, creatorId, instagramUserId: igUserId, isActive: true });
+      if (pendingRule?.preDms?.some((item) => item.type === 'EMAIL')) {
+        await queuePrimaryAfterEmail({ creatorId, igUserId, recipientId: fromId, rule: pendingRule, messageId });
+        return;
+      }
+    }
   }
 
   const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': 'DM' });
