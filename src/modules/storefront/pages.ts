@@ -29,11 +29,11 @@ const formatFollowers = (count: number): string => {
 };
 
 const renderStorefront = (
-  creator: { name?: string; igUsername?: string; profilePic?: string; profile?: { bio?: string; avatar?: string }; followersCount?: number },
+  creator: { name?: string; igUsername?: string; storefrontUsername?: string; profilePic?: string; profile?: { bio?: string; avatar?: string }; followersCount?: number },
   products: Array<{ _id: unknown; title: string; description?: string; type: string; imageUrl?: string; imageMimeType?: string; originalUrl?: string; dynamoShortUrl?: string }>,
 ): string => {
   const name = escapeHtml(creator.name || creator.igUsername || 'Creator');
-  const username = escapeHtml(creator.igUsername || 'creator');
+  const username = escapeHtml(creator.storefrontUsername || creator.igUsername || 'creator');
   const bio = escapeHtml(creator.profile?.bio || '');
   const profileImage = safeHttpUrl(creator.profile?.avatar) || safeHttpUrl(creator.profilePic);
   const followerCount = formatFollowers(creator.followersCount || 0);
@@ -72,7 +72,8 @@ const renderStorefront = (
 
 router.get('/:username/store', async (req: Request, res: Response): Promise<void> => {
   const username = req.params.username.trim().replace(/^@/, '');
-  const creator = await CreatorAccount.findOne({ igUsername: new RegExp(`^${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), isConnected: true });
+  const escapedUsername = new RegExp(`^${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+  const creator = await CreatorAccount.findOne({ $or: [{ storefrontUsername: escapedUsername }, { igUsername: escapedUsername }], isConnected: true });
   if (!creator) throw new AppError('Creator storefront not found.', 404);
 
   const products = await Product.find({ creatorId: creator._id }).sort({ createdAt: -1 }).select('-imageData');

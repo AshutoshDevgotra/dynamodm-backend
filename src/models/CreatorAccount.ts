@@ -4,6 +4,7 @@ export interface ICreatorAccount extends Document {
   userId: mongoose.Types.ObjectId;
   igUserId?: string; // Instagram user ID from OAuth
   igUsername?: string;
+  storefrontUsername?: string;
   igAccessToken?: string; // encrypted long-lived token
   igTokenExpiresAt?: Date; // 60-day expiry
   name?: string;
@@ -34,6 +35,12 @@ export interface ICreatorAccount extends Document {
     availableBalance: number;
     currency: string;
     razorpayAccountId?: string;
+    upiId?: string;
+    bankName?: string;
+    accountHolderName?: string;
+    ifscCode?: string;
+    bankAccountLast4?: string;
+    bankAccountNumberEncrypted?: string;
   };
   embedding?: number[];
   createdAt: Date;
@@ -47,6 +54,7 @@ const CreatorAccountSchema = new Schema<ICreatorAccount>(
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     igUserId: { type: String },
     igUsername: { type: String },
+    storefrontUsername: { type: String, trim: true, lowercase: true, maxlength: 30, index: true, sparse: true },
     igAccessToken: { type: String, select: false }, // encrypted at rest
     igTokenExpiresAt: { type: Date },
     name: { type: String },
@@ -75,8 +83,14 @@ const CreatorAccountSchema = new Schema<ICreatorAccount>(
     wallet: {
       pendingBalance: { type: Number, default: 0 },
       availableBalance: { type: Number, default: 0 },
-      currency: { type: String, default: 'USD' }
-      ,razorpayAccountId: { type: String }
+      currency: { type: String, default: 'INR' },
+      razorpayAccountId: { type: String },
+      upiId: { type: String, trim: true, lowercase: true, maxlength: 120 },
+      bankName: { type: String, trim: true, maxlength: 120 },
+      accountHolderName: { type: String, trim: true, maxlength: 120 },
+      ifscCode: { type: String, trim: true, uppercase: true, maxlength: 11 },
+      bankAccountLast4: { type: String, trim: true, maxlength: 4 },
+      bankAccountNumberEncrypted: { type: String, select: false }
     },
     embedding: { type: [Number], select: false }
   },

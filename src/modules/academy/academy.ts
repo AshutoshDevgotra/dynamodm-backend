@@ -5,8 +5,10 @@ import { authenticate, requirePaidSubscription, AuthRequest } from '../../middle
 import { AppError } from '../../middleware/errorHandler';
 import { Course } from '../../models/Course';
 import { CoursePurchase } from '../../models/CoursePurchase';
+import { CreatorPayoutRequest } from '../../models/CreatorPayoutRequest';
 import { CreatorAccount } from '../../models/CreatorAccount';
 import { CourseAsset, CourseAssetKind } from '../../models/CourseAsset';
+import { encryptSensitiveField } from '../../utils/secureField';
 import multer from 'multer';
 
 const router = Router();
@@ -32,6 +34,19 @@ const getCreator = async (userId: string) => {
 const getRazorpay = () => {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) throw new AppError('Razorpay is not configured.', 503);
   return new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+};
+
+const getPayoutSummary = async (creatorId: any, userId: string) => {
+  const [academyPurchases, payoutRequests] = await Promise.all([
+    CoursePurchase.find({ creatorId, status: 'CAPTURED' }).select('amount creatorAmount razorpayTransferId').lean(),
+    CreatorPayoutRequest.find({ creatorId, userId, status: { $in: ['REQUESTED', 'PROCESSING', 'PAID'] } }).select('amount academyAmount affiliateAmount status createdAt').sort({ createdAt: -1 }).lean(),
+  ]);
+  const academyGross = academyPurchases.reduce((sum, purchase) => sum + purchase.amount, 0);
+  const academyIncome = academyPurchases.reduce((sum, purchase) => sum + purchase.creatorAmount, 0);
+  const alreadyPaid = academyPurchases.filter((purchase) => Boolean(purchase.razorpayTransferId)).reduce((sum, purchase) => sum + purchase.creatorAmount, 0);
+  const affiliateIncome = 0;
+  const claimed = alreadyPaid + payoutRequests.reduce((sum, request) => sum + request.amount, 0);
+  return { academyGross, academyIncome, affiliateIncome, totalIncome: academyIncome + affiliateIncome, claimed, available: Math.max(0, academyIncome + affiliateIncome - claimed), payoutRequests };
 };
 
 // Creator workspace
@@ -202,22 +217,52 @@ router.post('/courses/verify', authenticate, async (req: AuthRequest, res: Respo
   purchase.razorpayPaymentId = razorpay_payment_id;
   purchase.status = 'CAPTURED';
   await purchase.save();
-  // Route the creator share immediately when the creator has completed
-  // Razorpay linked-account onboarding. If onboarding is incomplete, the
-  // captured purchase remains recorded and can be reconciled later.
-  const creator = await CreatorAccount.findById(purchase.creatorId).select('wallet');
-  const linkedAccountId = (creator?.wallet as any)?.razorpayAccountId;
-  if (linkedAccountId) {
-    try {
-      const transfer = await ((getRazorpay() as any).transfers.create)({ account: linkedAccountId, amount: purchase.creatorAmount, currency: 'INR', notes: { courseId: purchase.courseId.toString(), purchaseId: purchase._id.toString(), type: 'academy_course_payout' } });
-      purchase.razorpayTransferId = transfer.id;
-      await purchase.save();
-    } catch {
-      // Do not roll back student access after a captured payment. The
-      // missing transfer is visible through the payout ledger for retry.
-    }
-  }
+  // Keep the creator share in the payout ledger. An admin reviews and
+  // processes the creator's UPI claim instead of transferring automatically.
   res.json({ success: true, data: { purchaseId: purchase._id } });
+});
+
+router.get('/creator/payouts', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response) => {
+  const creator = await getCreator(req.user!.id);
+  const summary = await getPayoutSummary(creator._id, req.user!.id);
+  res.json({ success: true, data: { ...summary, upiId: (creator.wallet as any)?.upiId || null, currency: 'INR', bankDetails: { bankName: (creator.wallet as any)?.bankName || '', accountHolderName: (creator.wallet as any)?.accountHolderName || '', ifscCode: (creator.wallet as any)?.ifscCode || '', accountLast4: (creator.wallet as any)?.bankAccountLast4 || '' } } });
+});
+
+router.put('/creator/payouts/upi', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response) => {
+  const creator = await getCreator(req.user!.id);
+  const upiId = String(req.body?.upiId || '').trim().toLowerCase();
+  if (!/^[a-z0-9._-]{2,100}@[a-z0-9.-]{2,60}$/.test(upiId)) throw new AppError('Enter a valid UPI ID.', 400);
+  creator.wallet = { ...creator.wallet, upiId, currency: 'INR' } as any;
+  await creator.save();
+  res.json({ success: true, data: { upiId } });
+});
+
+router.put('/creator/payouts/bank', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response) => {
+  const creator = await getCreator(req.user!.id);
+  const bankName = String(req.body?.bankName || '').trim();
+  const accountHolderName = String(req.body?.accountHolderName || '').trim();
+  const accountNumber = String(req.body?.accountNumber || '').replace(/\s+/g, '');
+  const ifscCode = String(req.body?.ifscCode || '').trim().toUpperCase();
+  if (bankName.length < 2 || accountHolderName.length < 2) throw new AppError('Enter the bank name and account holder name.', 400);
+  if (!/^\d{9,18}$/.test(accountNumber)) throw new AppError('Enter a valid bank account number.', 400);
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) throw new AppError('Enter a valid 11-character IFSC code.', 400);
+  creator.wallet = { ...creator.wallet, bankName, accountHolderName, ifscCode, bankAccountLast4: accountNumber.slice(-4), bankAccountNumberEncrypted: encryptSensitiveField(accountNumber), currency: 'INR' } as any;
+  await creator.save();
+  res.json({ success: true, data: { bankDetails: { bankName, accountHolderName, ifscCode, accountLast4: accountNumber.slice(-4) } } });
+});
+
+router.post('/creator/payouts/claim', authenticate, requirePaidSubscription, async (req: AuthRequest, res: Response) => {
+  const creator = await getCreator(req.user!.id);
+  const summary = await getPayoutSummary(creator._id, req.user!.id);
+  const upiId = String((req.body?.upiId || (creator.wallet as any)?.upiId || '')).trim().toLowerCase();
+  if (!/^[a-z0-9._-]{2,100}@[a-z0-9.-]{2,60}$/.test(upiId)) throw new AppError('Add a valid UPI ID before claiming your balance.', 400);
+  if (summary.available < 100) throw new AppError('Your available balance must be at least ₹1 to claim.', 400);
+  if (!(creator.wallet as any)?.upiId || (creator.wallet as any).upiId !== upiId) {
+    creator.wallet = { ...creator.wallet, upiId, currency: 'INR' } as any;
+    await creator.save();
+  }
+  const request = await CreatorPayoutRequest.create({ creatorId: creator._id, userId: req.user!.id, upiId, amount: summary.available, academyAmount: summary.academyIncome, affiliateAmount: summary.affiliateIncome, status: 'REQUESTED' });
+  res.status(201).json({ success: true, data: { requestId: request._id, amount: request.amount, status: request.status, expectedProcessing: 'Within 2 working days' } });
 });
 
 router.get('/student/enrollments', authenticate, async (req: AuthRequest, res: Response) => {
