@@ -19,13 +19,9 @@ export interface ServerCampaignConfig {
 
 export const SERVER_CAMPAIGN: ServerCampaignConfig = {
   campaignId: 'diwali-extended-2026',
-  active: true,
+  active: false,
   endDate: null, // Set to e.g. new Date('2026-11-30T23:59:59+05:30') to expire
-  plans: [
-    { planId: 'starter', regularPriceInr: 99,  offerPriceInr: 79,  introductoryCycles: 3 },
-    { planId: 'pro',     regularPriceInr: 499, offerPriceInr: 299, introductoryCycles: 3 },
-    { planId: 'premium', regularPriceInr: 999, offerPriceInr: 699, introductoryCycles: 3 },
-  ],
+  plans: [],
 };
 
 /**
