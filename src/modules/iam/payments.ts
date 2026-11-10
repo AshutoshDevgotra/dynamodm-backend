@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
-import { authenticate, AuthRequest } from '../../middleware/auth';
+import { authenticate, AuthRequest, requireRole } from '../../middleware/auth';
 import { Subscription } from '../../models/Subscription';
 import { Payment } from '../../models/Payment';
 import { BrandCampaign } from '../../models/BrandCampaign';
@@ -12,6 +12,7 @@ import { logger } from '../../utils/logger';
 import { CheckoutPlan, PLANS, paidPlans } from '../../config/plans';
 import { addOneMonth, verifyRazorpaySignature } from '../../utils/razorpay';
 import { getCampaignOfferPrice, SERVER_CAMPAIGN } from '../../config/campaign';
+import { createRazorpayPlan, createRazorpaySubscription } from '../../services/razorpaySubscriptions';
 
 const router = Router();
 
@@ -24,6 +25,28 @@ const getRazorpayInstance = (): Razorpay => {
   }
 
   return new Razorpay({ key_id: keyId, key_secret: keySecret });
+};
+
+const getCreatorSubscriptionPlanId = (): string => {
+  const planId = process.env.RAZORPAY_CREATOR_SUBSCRIPTION_PLAN_ID?.trim();
+  if (!planId) throw new AppError('Creator subscription is not configured. Set RAZORPAY_CREATOR_SUBSCRIPTION_PLAN_ID.', 503);
+  return planId;
+};
+
+const activateCreatorMandate = async (input: { userId: string; subscriptionId: string; paymentId?: string; status: 'trialing' | 'active'; startAt: Date }) => {
+  const subscription = await Subscription.findOneAndUpdate(
+    { userId: input.userId },
+    { $set: { userId: input.userId, plan: 'starter', status: input.status, provider: 'razorpay', razorpaySubscriptionId: input.subscriptionId, providerOrderId: input.subscriptionId, providerPaymentId: input.paymentId, startedAt: new Date(), trialEnd: input.startAt, currentPeriodStart: input.startAt, currentPeriodEnd: addOneMonth(input.startAt), cancelAtPeriodEnd: false, features: getSubscriptionFeatures('starter') } },
+    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+  );
+  if (input.paymentId) {
+    await Payment.findOneAndUpdate(
+      { userId: input.userId, providerOrderId: input.subscriptionId },
+      { $set: { userId: input.userId, subscriptionId: subscription._id, plan: 'starter', provider: 'razorpay', providerOrderId: input.subscriptionId, razorpayOrderId: input.subscriptionId, razorpayPaymentId: input.paymentId, providerPaymentId: input.paymentId, amount: 100, currency: 'INR', status: 'captured', description: 'Creator subscription authorization' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  }
+  return subscription;
 };
 
 const getSubscriptionFeatures = (plan: CheckoutPlan) => ({
@@ -110,6 +133,52 @@ router.get('/plans', (_req: Request, res: Response): void => {
       ],
     },
   });
+});
+
+// POST /api/payments/plans/create — one-time admin operation to create and log a Razorpay Plan ID.
+router.post('/plans/create', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response): Promise<void> => {
+  const planId = String(req.body?.planId || 'starter') as keyof typeof PLANS;
+  if (!['starter', 'pro', 'premium'].includes(planId)) throw new AppError('Only billable plan tiers can be created in Razorpay.', 400);
+  const plan = await createRazorpayPlan({ planId });
+  res.status(201).json({ success: true, data: { planId, razorpayPlanId: plan.id, message: 'Store this Razorpay plan ID as RAZORPAY_CREATOR_SUBSCRIPTION_PLAN_ID when using the Creator plan.' } });
+});
+
+// POST /api/payments/create-subscription — ₹1 authorization + one-month trial, then ₹99/month.
+router.post('/create-subscription', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const existing = await Subscription.findOne({ userId: req.user!.id, status: { $in: ['trialing', 'active'] }, razorpaySubscriptionId: { $exists: true } });
+  if (existing?.razorpaySubscriptionId && existing.status === 'active') throw new AppError('A Creator subscription is already active.', 409);
+  if (existing?.razorpaySubscriptionId && existing.status === 'trialing') {
+    res.json({ success: true, data: { subscriptionId: existing.razorpaySubscriptionId, keyId: process.env.RAZORPAY_KEY_ID, planName: 'Creator', recurringAmountInr: 99, authorizationAmountInr: 1, trialEnd: existing.trialEnd } });
+    return;
+  }
+  const startAt = addOneMonth(new Date());
+  let razorpaySubscription: any;
+  try {
+    razorpaySubscription = await createRazorpaySubscription({
+      planId: getCreatorSubscriptionPlanId(), totalCount: 1200, quantity: 1, startAt,
+      addons: [{ item: { name: 'Creator subscription authorization', amount: 100, currency: 'INR', description: 'One-time authorization payment for the free first month' } }],
+      notes: { userId: req.user!.id, plan: 'starter', trialEnd: startAt.toISOString(), recurringAmountInr: '99' },
+    });
+  } catch (error: any) {
+    const errMsg = error?.error?.description || error?.message || 'Razorpay subscription creation failed';
+    logger.error(`Razorpay subscription creation error: ${errMsg}`, error?.error);
+    throw new AppError(`Subscription setup failed: ${errMsg}`, 502);
+  }
+  await activateCreatorMandate({ userId: req.user!.id, subscriptionId: razorpaySubscription.id, status: 'trialing', startAt });
+  res.json({ success: true, data: { subscriptionId: razorpaySubscription.id, keyId: process.env.RAZORPAY_KEY_ID, planName: 'Creator', recurringAmountInr: 99, authorizationAmountInr: 1, trialEnd: startAt.toISOString() } });
+});
+
+// POST /api/payments/verify-subscription
+router.post('/verify-subscription', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
+  const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body || {};
+  if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) throw new AppError('Missing subscription verification fields.', 400);
+  const expected = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '').update(`${razorpay_payment_id}|${razorpay_subscription_id}`).digest('hex');
+  if (expected.length !== razorpay_signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(razorpay_signature))) throw new AppError('Invalid subscription signature.', 400);
+  const razorpaySubscription = await (getRazorpayInstance() as any).subscriptions.fetch(razorpay_subscription_id);
+  if (razorpaySubscription?.notes?.userId !== req.user!.id || razorpaySubscription?.plan_id !== getCreatorSubscriptionPlanId()) throw new AppError('Subscription does not belong to this account.', 403);
+  const startAt = new Date(Number(razorpaySubscription.start_at) * 1000);
+  const subscription = await activateCreatorMandate({ userId: req.user!.id, subscriptionId: razorpay_subscription_id, paymentId: razorpay_payment_id, status: 'trialing', startAt });
+  res.json({ success: true, data: { plan: subscription.plan, status: subscription.status, trialEnd: subscription.trialEnd, currentPeriodEnd: subscription.currentPeriodEnd } });
 });
 
 // POST /api/payments/create-order
@@ -261,6 +330,19 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   if (event.event === 'payment.failed') {
     const payment = event.payload?.payment?.entity;
     if (payment?.order_id) await Payment.findOneAndUpdate({ providerOrderId: payment.order_id }, { status: 'failed' });
+  }
+
+  if (['subscription.activated', 'subscription.pending', 'subscription.halted', 'subscription.completed'].includes(event.event)) {
+    const sub = event.payload?.subscription?.entity;
+    if (sub?.id) {
+      const status = event.event === 'subscription.activated' ? 'active'
+        : event.event === 'subscription.halted' ? 'past_due'
+          : event.event === 'subscription.completed' ? 'expired' : 'trialing';
+      await Subscription.findOneAndUpdate(
+        { razorpaySubscriptionId: sub.id },
+        { $set: { status, ...(sub.current_start ? { currentPeriodStart: new Date(sub.current_start * 1000) } : {}), ...(sub.current_end ? { currentPeriodEnd: new Date(sub.current_end * 1000) } : {}) } },
+      );
+    }
   }
 
   if (event.event === 'subscription.cancelled') {
