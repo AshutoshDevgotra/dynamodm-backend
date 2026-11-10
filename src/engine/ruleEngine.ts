@@ -12,6 +12,8 @@ import { assertUsageAvailable } from '../utils/usage';
 import { bypassesCoolingPeriod } from '../config/access';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+const AUTOMATION_COOLDOWN_MINUTES = Math.max(1, Number(process.env.AUTOMATION_COOLDOWN_MINUTES || 5));
+
 interface CommentEvent {
   from: { id: string; username?: string };
   text: string;
@@ -247,7 +249,8 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       }
     }
 
-    const cooldownSince = new Date(Date.now() - 60 * 60 * 1000);
+    // Short application-level duplicate guard; this is not an Instagram limit.
+    const cooldownSince = new Date(Date.now() - AUTOMATION_COOLDOWN_MINUTES * 60 * 1000);
     const recentDM = await DMLog.exists({
       creatorId,
       automationRuleId: rule._id,
@@ -302,11 +305,11 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: comment.from.id },
       {
+        $set: { automationRuleId: rule._id },
         $setOnInsert: {
           creatorId, instagramUserId: comment.from.id,
           username: comment.from.username, source: 'comment',
           commentText: comment.text, postId: comment.media?.id,
-          automationRuleId: rule._id,
         },
       },
       { upsert: true, new: true }
@@ -362,7 +365,10 @@ async function queueCommentDM(input: {
   await assertUsageAvailable(creatorId, 'dms');
   const lead = await Lead.findOneAndUpdate(
     { creatorId, instagramUserId: recipientId },
-    { $setOnInsert: { creatorId, instagramUserId: recipientId, username, source: 'comment', commentText, postId, automationRuleId: rule._id } },
+    {
+      $set: { automationRuleId: rule._id },
+      $setOnInsert: { creatorId, instagramUserId: recipientId, username, source: 'comment', commentText, postId },
+    },
     { upsert: true, new: true }
   );
   const dmLog = await DMLog.create({
@@ -517,9 +523,22 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
       { $set: { email: emailMatch, source: 'manual' }, $setOnInsert: { creatorId, instagramUserId: fromId, username: 'Unknown' } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
-    const pendingRule = lead?.automationRuleId
+    let pendingRule = lead?.automationRuleId
       ? await Automation.findOne({ _id: lead.automationRuleId, creatorId, instagramUserId: igUserId, isActive: true })
       : null;
+    // Recover conversations created before the lead was linked to its rule.
+    // The email pre-DM already has the automationRuleId in DMLog.
+    if (!pendingRule) {
+      const recentEmailDm = await DMLog.findOne({
+        creatorId,
+        instagramUserId: fromId,
+        status: 'sent',
+        createdAt: { $gte: new Date(Date.now() - AUTOMATION_COOLDOWN_MINUTES * 60 * 1000) },
+      }).sort({ createdAt: -1 }).select('automationRuleId');
+      if (recentEmailDm?.automationRuleId) {
+        pendingRule = await Automation.findOne({ _id: recentEmailDm.automationRuleId, creatorId, instagramUserId: igUserId, isActive: true });
+      }
+    }
     if (pendingRule?.preDms?.some((item) => item.type === 'EMAIL')) {
       await queuePrimaryAfterEmail({ creatorId, igUserId, recipientId: fromId, rule: pendingRule });
       return;
@@ -541,7 +560,7 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
         automationRuleId: rule._id,
         instagramUserId: fromId,
         status: { $in: ['queued', 'sent'] },
-        createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) },
+        createdAt: { $gte: new Date(Date.now() - AUTOMATION_COOLDOWN_MINUTES * 60 * 1000) },
       });
       if (recentDM && !bypassesCoolingPeriod(fromId)) {
         logger.info(`⏭️ Skipping rule ${rule._id} — user ${fromId} is in cooldown`);
