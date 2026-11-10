@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, requireRole, AuthRequest } from '../../middleware/auth';
+import { authenticate, AuthRequest } from '../../middleware/auth';
 import { User } from '../../models/User';
 import { Subscription } from '../../models/Subscription';
 import { Payment } from '../../models/Payment';
@@ -8,7 +8,14 @@ import { Lead } from '../../models/Lead';
 import { DMLog } from '../../models/DMLog';
 
 const router = Router();
-router.use(authenticate, requireRole('ADMIN'));
+const ADMIN_EMAIL = 'ashutoshdevgotra@gmail.com';
+router.use(authenticate, (req: AuthRequest, res: Response, next) => {
+  if (req.user?.role?.toUpperCase() !== 'ADMIN' || req.user.email.toLowerCase() !== ADMIN_EMAIL) {
+    res.status(403).json({ success: false, message: 'Admin dashboard access is restricted.' });
+    return;
+  }
+  next();
+});
 
 router.get('/metrics', async (_req: AuthRequest, res: Response): Promise<void> => {
   const [totalUsers, totalCreators, activeSubscriptions, totalRevenue, totalDMs, totalLeads] = await Promise.all([
@@ -29,4 +36,13 @@ router.patch('/users/:id/suspend', async (req: AuthRequest, res: Response): Prom
 router.patch('/users/:id/activate', async (req: AuthRequest, res: Response): Promise<void> => { const user = await User.findByIdAndUpdate(req.params.id, { isActive: true }, { new: true }); if (!user) { res.status(404).json({ success: false, message: 'User not found.' }); return; } res.json({ success: true, message: 'User activated.', data: { user } }); });
 router.get('/subscriptions', async (req: AuthRequest, res: Response): Promise<void> => { const page = Math.max(1, parseInt(req.query.page as string) || 1); const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20)); const [subs, total] = await Promise.all([Subscription.find().populate('userId', 'name email').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit), Subscription.countDocuments()]); res.json({ success: true, data: { subscriptions: subs, pagination: { page, limit, total } } }); });
 router.get('/revenue', async (_req: AuthRequest, res: Response): Promise<void> => { const monthly = await Payment.aggregate([{ $match: { status: 'captured' } }, { $group: { _id: { month: { $month: '$createdAt' }, year: { $year: '$createdAt' } }, revenue: { $sum: '$amount' }, count: { $sum: 1 } } }, { $sort: { '_id.year': -1, '_id.month': -1 } }, { $limit: 12 }]); res.json({ success: true, data: { monthly } }); });
+router.get('/billing-overview', async (_req: AuthRequest, res: Response): Promise<void> => {
+  const [capturedPayments, subscriptions, planBreakdown, recentPayments] = await Promise.all([
+    Payment.aggregate([{ $match: { status: 'captured' } }, { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }]),
+    Subscription.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    Subscription.aggregate([{ $group: { _id: '$plan', count: { $sum: 1 } } }]),
+    Payment.find({}).select('-razorpaySignature').populate('userId', 'name email role status isActive createdAt').sort({ createdAt: -1 }).limit(100).lean(),
+  ]);
+  res.json({ success: true, data: { capturedPayments: { totalPaise: capturedPayments[0]?.total || 0, count: capturedPayments[0]?.count || 0 }, subscriptions, planBreakdown, recentPayments } });
+});
 export default router;

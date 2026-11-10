@@ -20,7 +20,7 @@ interface DMJobData {
 }
 
 export async function sendInstagramDM(data: DMJobData): Promise<void> {
-  const { dmLogId, creatorId, igUserId, recipientId, commentId, message, ctaLink, buttons, automationRuleId } = data;
+  const { dmLogId, creatorId, igUserId, recipientId, commentId, message, ctaLink, buttons, attachmentUrl, automationRuleId } = data;
 
   logger.info(`📤 sendInstagramDM called`, {
     dmLogId, creatorId, igUserId, recipientId, automationRuleId,
@@ -54,24 +54,40 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   try {
     if (commentId) {
       try {
-        await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons);
+        await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons, attachmentUrl);
       } catch (error) {
         if (!buttons?.length || isInstagramSessionInvalidated(error)) throw error;
-        logger.warn('Interactive private reply failed; sending the plain-text fallback.', {
-          commentId,
-          recipientId,
-          error: (error as Error)?.message,
-        });
-        const profileUrl = buttons.find((button) => button.type === 'web_url')?.url;
-        await privateReplyToComment(
-          igUserId,
-          commentId,
-          profileUrl ? `${messageText}\n${profileUrl}` : messageText,
-          accessToken,
-        );
+        // If private reply by commentId with template fails, attempt direct sendDM to recipientId
+        let sentDirect = false;
+        if (recipientId) {
+          try {
+            await sendDM(igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
+            sentDirect = true;
+            logger.info('Private reply failed with template, but direct sendDM with buttons succeeded', { recipientId });
+          } catch (directErr) {
+            logger.warn('Direct sendDM with buttons also failed', { recipientId, error: (directErr as Error)?.message });
+          }
+        }
+        if (!sentDirect) {
+          logger.warn('Interactive reply with buttons failed; sending the plain-text fallback with link.', {
+            commentId,
+            recipientId,
+            error: (error as Error)?.message,
+          });
+          const buttonLinks = buttons
+            .filter((button) => button.type === 'web_url' && button.url)
+            .map((button) => `👉 ${button.title}: ${button.url}`)
+            .join('\n');
+          await privateReplyToComment(
+            igUserId,
+            commentId,
+            buttonLinks ? `${messageText}\n\n${buttonLinks}` : messageText,
+            accessToken,
+          );
+        }
       }
     } else {
-      await sendDM(igUserId, recipientId, messageText, accessToken, buttons);
+      await sendDM(igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
     }
 
     logger.info(`✅ DM sent successfully to ${recipientId}`);

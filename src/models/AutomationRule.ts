@@ -87,6 +87,7 @@ const AutomationSchema = new Schema<IAutomation>(
       buttonUrl: String,
       trackButtonClicks: Boolean,
       buttons: [{
+        _id: false,
         type: { type: String, enum: ['web_url'], default: 'web_url' },
         title: String,
         url: String,

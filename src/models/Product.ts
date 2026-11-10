@@ -5,6 +5,8 @@ export interface IProduct extends Document {
   type: 'AFFILIATE' | 'DIGITAL_PRODUCT' | 'SERVICE' | 'COURSE';
   title: string;
   description?: string;
+  mediaType?: 'image' | 'video' | 'post';
+  mediaUrl?: string;
   imageUrl?: string;
   imageData?: Buffer;
   imageMimeType?: string;
@@ -23,6 +25,8 @@ const ProductSchema = new Schema<IProduct>(
     type: { type: String, enum: ['AFFILIATE', 'DIGITAL_PRODUCT', 'SERVICE', 'COURSE'], required: true },
     title: { type: String, required: true },
     description: { type: String },
+    mediaType: { type: String, enum: ['image', 'video', 'post'] },
+    mediaUrl: { type: String },
     imageUrl: { type: String },
     imageData: { type: Buffer, select: false },
     imageMimeType: { type: String },

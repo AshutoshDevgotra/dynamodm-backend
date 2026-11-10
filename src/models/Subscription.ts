@@ -25,6 +25,7 @@ export interface ISubscription extends Document {
     maxAutomations: number;
     maxLeads: number;
     maxDmsPerMonth: number;
+    instagramAccountsLimit: number;
     analyticsRetentionDays: number;
     prioritySupport: boolean;
     customBranding: boolean;
@@ -66,6 +67,7 @@ const SubscriptionSchema = new Schema<ISubscription>(
       maxAutomations: { type: Number },
       maxLeads: { type: Number },
       maxDmsPerMonth: { type: Number },
+      instagramAccountsLimit: { type: Number },
       analyticsRetentionDays: { type: Number },
       prioritySupport: { type: Boolean },
       customBranding: { type: Boolean },
@@ -81,6 +83,7 @@ SubscriptionSchema.pre('save', function (next) {
       maxAutomations: config.automationLimit,
       maxLeads: config.leadsLimit,
       maxDmsPerMonth: config.dmsLimit,
+      instagramAccountsLimit: config.instagramAccountsLimit,
       analyticsRetentionDays: config.analyticsRetentionDays,
       prioritySupport: this.plan !== 'free',
       customBranding: this.plan !== 'free',

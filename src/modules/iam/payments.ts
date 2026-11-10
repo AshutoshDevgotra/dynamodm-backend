@@ -30,6 +30,7 @@ const getSubscriptionFeatures = (plan: CheckoutPlan) => ({
   maxAutomations: PLANS[plan].automationLimit,
   maxLeads: PLANS[plan].leadsLimit,
   maxDmsPerMonth: PLANS[plan].dmsLimit,
+  instagramAccountsLimit: PLANS[plan].instagramAccountsLimit,
   analyticsRetentionDays: PLANS[plan].analyticsRetentionDays,
   prioritySupport: plan !== 'starter',
   customBranding: plan === 'premium',
@@ -103,10 +104,9 @@ router.get('/plans', (_req: Request, res: Response): void => {
     success: true,
     data: {
       plans: [
-        planDetails('free', 'Free'),
-        planDetails('starter', 'Starter'),
-        planDetails('pro', 'Pro'),
-        planDetails('premium', 'Premium'),
+        { ...planDetails('free', 'Starter'), publicName: 'Starter', description: 'Forever free for creators getting started.' },
+        { ...planDetails('starter', 'Creator'), publicName: 'Creator', description: '₹0 for the first month, then ₹99/month.', mandateRequired: true },
+        { id: 'enterprise', name: 'Pro', publicName: 'Pro', price: null, currency: 'INR', interval: 'month', description: 'Tailored solutions for growing teams.', limits: { automations: -1, leads: -1, dms: -1, analyticsRetentionDays: 365 }, features: ['Custom landing pages', 'Dedicated Growth Manager', 'Dedicated Ads Manager', 'Dedicated WhatsApp support'], selfServeCheckout: false },
       ],
     },
   });

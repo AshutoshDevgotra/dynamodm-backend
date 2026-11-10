@@ -387,6 +387,20 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
     timestamp: new Date(),
   });
 
+  // Email-collection flows ask the recipient to reply with an address. Save a
+  // valid reply to the creator's lead even when it is not itself an automation
+  // keyword, so the request is useful rather than just cosmetic.
+  const emailMatch = messageText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase();
+  if (emailMatch) {
+    const existingLead = await Lead.exists({ creatorId, instagramUserId: fromId });
+    if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
+    await Lead.findOneAndUpdate(
+      { creatorId, instagramUserId: fromId },
+      { $set: { email: emailMatch, source: 'manual' }, $setOnInsert: { creatorId, instagramUserId: fromId, username: 'Unknown' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  }
+
   const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': 'DM' });
   logger.info(`🔍 Found ${rules.length} active DM automation(s) for creator ${creatorId}`);
 

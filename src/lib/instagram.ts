@@ -173,40 +173,164 @@ export async function checkFollowerRelationship(
   }
 }
 
+export type IGButton = { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string };
+
+/**
+ * Formats message text into a valid title (max 80 chars) and subtitle (max 80 chars)
+ * for Instagram Generic Templates.
+ * Meta strictly requires:
+ * 1. Title must NOT contain line breaks (\n, \r)
+ * 2. Subtitle must NOT contain line breaks (\n, \r)
+ * 3. Title must not be empty (max 80 characters)
+ * 4. Subtitle is optional (max 80 characters)
+ */
+export function formatTemplateText(message: string): { title: string; subtitle?: string } {
+  const clean = String(message || '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\r?\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!clean) {
+    return { title: 'Tap below to open link' };
+  }
+
+  if (clean.length <= 80) {
+    return { title: clean };
+  }
+
+  // Find a clean word or sentence break before 80 characters
+  let breakPoint = 80;
+  const sentenceEnd = clean.slice(0, 80).search(/[.!?]\s+[A-Z0-9]/i);
+  if (sentenceEnd > 15) {
+    breakPoint = sentenceEnd + 1;
+  } else {
+    const lastSpace = clean.slice(0, 80).lastIndexOf(' ');
+    if (lastSpace > 25) {
+      breakPoint = lastSpace;
+    }
+  }
+
+  const title = clean.slice(0, breakPoint).trim();
+  const rest = clean.slice(breakPoint).trim();
+  const subtitle = rest ? rest.slice(0, 80).trim() : undefined;
+
+  return {
+    title: title || clean.slice(0, 80),
+    ...(subtitle ? { subtitle } : {}),
+  };
+}
+
+export function sanitizeIGButtons(buttons?: unknown): IGButton[] | undefined {
+  if (!Array.isArray(buttons) || buttons.length === 0) return undefined;
+  const result: IGButton[] = [];
+  for (const item of buttons) {
+    if (!item) continue;
+    const raw = typeof (item as any).toObject === 'function' ? (item as any).toObject() : item;
+    const title = String(raw.title || '')
+      .replace(/[\r\n]+/g, ' ')
+      .trim()
+      .substring(0, 20);
+    if (!title) continue;
+
+    if (raw.type === 'postback' || (!raw.url && raw.payload)) {
+      result.push({
+        type: 'postback',
+        title,
+        payload: String(raw.payload || raw.title || '').trim().substring(0, 1000),
+      });
+    } else {
+      let url = String(raw.url || '').trim();
+      if (!url) continue;
+      if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+      result.push({
+        type: 'web_url',
+        title,
+        url,
+      });
+    }
+    if (result.length >= 3) break;
+  }
+  return result.length > 0 ? result : undefined;
+}
+
 export async function sendDM(
   igUserId: string,
   recipientId: string,
   message: string,
   accessToken: string,
-  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[]
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[],
+  attachmentUrl?: string
 ): Promise<{ mid: string }> {
-  try {
-    const messagePayload = buttons?.length
-      ? {
+  const cleanButtons = sanitizeIGButtons(buttons);
+
+  if (cleanButtons?.length) {
+    const { title, subtitle } = formatTemplateText(message);
+    const element: any = {
+      title,
+      buttons: cleanButtons,
+    };
+    if (subtitle) element.subtitle = subtitle;
+    if (attachmentUrl && /^https?:\/\/.+\.(jpe?g|png|webp|gif)/i.test(attachmentUrl)) {
+      element.image_url = attachmentUrl;
+    }
+
+    try {
+      const genericPayload = {
+        recipient: { id: recipientId },
+        message: {
           attachment: {
             type: 'template',
             payload: {
               template_type: 'generic',
-              elements: [
-                {
-                  title: message.substring(0, 80), // Instagram limits title to 80 chars
-                  subtitle: message.length > 80 ? message.substring(80, 160) : undefined, // Use remaining text as subtitle
-                  buttons: buttons.slice(0, 3), // Max 3 buttons per element
-                },
-              ],
+              elements: [element],
             },
           },
-        }
-      : { text: message };
+        },
+      };
+      const response = await axios.post(`${INSTAGRAM_API}/${igUserId}/messages`, genericPayload, {
+        params: { access_token: accessToken },
+      });
+      return response.data;
+    } catch (genericErr) {
+      logger.warn('sendDM generic template failed, attempting button template fallback', {
+        error: (genericErr as any)?.response?.data?.error?.message || (genericErr as Error)?.message,
+      });
+      try {
+        const cleanText = message.replace(/[\r\n]+/g, ' ').trim().substring(0, 640);
+        const buttonPayload = {
+          recipient: { id: recipientId },
+          message: {
+            attachment: {
+              type: 'template',
+              payload: {
+                template_type: 'button',
+                text: cleanText || title,
+                buttons: cleanButtons,
+              },
+            },
+          },
+        };
+        const response = await axios.post(`${INSTAGRAM_API}/${igUserId}/messages`, buttonPayload, {
+          params: { access_token: accessToken },
+        });
+        return response.data;
+      } catch (buttonErr) {
+        handleIGError(buttonErr, 'sendDM');
+      }
+    }
+  }
+
+  try {
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
         recipient: { id: recipientId },
-        message: messagePayload,
+        message: { text: message },
       },
       { params: { access_token: accessToken } }
     );
-
     return response.data;
   } catch (error) {
     handleIGError(error, 'sendDM');
@@ -218,35 +342,77 @@ export async function privateReplyToComment(
   commentId: string,
   message: string,
   accessToken: string,
-  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[]
+  buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[],
+  attachmentUrl?: string
 ): Promise<{ mid: string }> {
-  try {
-    const messagePayload = buttons?.length
-      ? {
+  const cleanButtons = sanitizeIGButtons(buttons);
+
+  if (cleanButtons?.length) {
+    const { title, subtitle } = formatTemplateText(message);
+    const element: any = {
+      title,
+      buttons: cleanButtons,
+    };
+    if (subtitle) element.subtitle = subtitle;
+    if (attachmentUrl && /^https?:\/\/.+\.(jpe?g|png|webp|gif)/i.test(attachmentUrl)) {
+      element.image_url = attachmentUrl;
+    }
+
+    try {
+      const genericPayload = {
+        recipient: { comment_id: commentId },
+        message: {
           attachment: {
             type: 'template',
             payload: {
               template_type: 'generic',
-              elements: [
-                {
-                  title: message.substring(0, 80), // Instagram limits title to 80 chars
-                  subtitle: message.length > 80 ? message.substring(80, 160) : undefined, // Use remaining text as subtitle
-                  buttons: buttons.slice(0, 3), // Max 3 buttons per element
-                },
-              ],
+              elements: [element],
             },
           },
-        }
-      : { text: message };
+        },
+      };
+      const response = await axios.post(`${INSTAGRAM_API}/${igUserId}/messages`, genericPayload, {
+        params: { access_token: accessToken },
+      });
+      return response.data;
+    } catch (genericErr) {
+      logger.warn('privateReplyToComment generic template failed, attempting button template fallback', {
+        error: (genericErr as any)?.response?.data?.error?.message || (genericErr as Error)?.message,
+      });
+      try {
+        const cleanText = message.replace(/[\r\n]+/g, ' ').trim().substring(0, 640);
+        const buttonPayload = {
+          recipient: { comment_id: commentId },
+          message: {
+            attachment: {
+              type: 'template',
+              payload: {
+                template_type: 'button',
+                text: cleanText || title,
+                buttons: cleanButtons,
+              },
+            },
+          },
+        };
+        const response = await axios.post(`${INSTAGRAM_API}/${igUserId}/messages`, buttonPayload, {
+          params: { access_token: accessToken },
+        });
+        return response.data;
+      } catch (buttonErr) {
+        handleIGError(buttonErr, 'privateReplyToComment');
+      }
+    }
+  }
+
+  try {
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
         recipient: { comment_id: commentId },
-        message: messagePayload,
+        message: { text: message },
       },
       { params: { access_token: accessToken } }
     );
-
     return response.data;
   } catch (error) {
     handleIGError(error, 'privateReplyToComment');

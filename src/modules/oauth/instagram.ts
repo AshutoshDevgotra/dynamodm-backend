@@ -19,6 +19,8 @@ import {
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
+import { Subscription } from '../../models/Subscription';
+import { PLANS } from '../../config/plans';
 
 const router = Router();
 const INSTAGRAM_API = 'https://graph.instagram.com/v23.0';
@@ -56,11 +58,17 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
   logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comments and messages webhooks`);
 }
 
- router.get('/login', authenticate, requireActiveSubscription, (req: AuthRequest, res: Response): void => {
+router.get('/login', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
   const token = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice(7).trim()
     : '';
   if (!token) throw new AppError('A valid session is required to connect Instagram.', 401);
+  const [connectedCount, subscription] = await Promise.all([
+    CreatorAccount.countDocuments({ userId: req.user!.id, isConnected: true }),
+    Subscription.findOne({ userId: req.user!.id, status: 'active' }).select('plan features'),
+  ]);
+  const limit = subscription?.features?.instagramAccountsLimit ?? PLANS.free.instagramAccountsLimit;
+  if (limit !== -1 && connectedCount >= limit) throw new AppError(`Your plan allows ${limit} connected Instagram account${limit === 1 ? '' : 's'}. Upgrade to connect more.`, 403);
   const redirectUri = getInstagramCallbackUrl();
   logger.info('Starting Instagram OAuth flow', { redirectUri });
   const authUrl = buildInstagramBusinessLoginUrl({
@@ -198,7 +206,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     }
 
     await CreatorAccount.findOneAndUpdate(
-      { userId },
+      { userId, igUserId: instagramUserId },
       { $set: updatePayload },
       { upsert: true, new: true }
     );
@@ -216,7 +224,8 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
 });
 
 router.get('/status', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id }).select('+igAccessToken');
+  const accounts = await CreatorAccount.find({ userId: req.user!.id }).sort({ updatedAt: -1 }).select('+igAccessToken');
+  const account = accounts.find((candidate) => candidate.isConnected) || accounts[0];
   if (account?.isConnected && account.igAccessToken && account.igUserId) {
     try {
       const accessToken = decryptToken(account.igAccessToken);
@@ -231,16 +240,23 @@ router.get('/status', authenticate, requireActiveSubscription, async (req: AuthR
       logger.warn('Instagram webhook subscription refresh failed', subscriptionError?.response?.data || subscriptionError?.message || subscriptionError);
     }
   }
-  const accountData = account?.toObject() as Record<string, unknown> | undefined;
+  const accountData = account?.toObject() as unknown as Record<string, unknown> | undefined;
   if (accountData) {
     delete accountData.igAccessToken;
     if (accountData.igUsername) accountData.webUrl = `https://www.instagram.com/${accountData.igUsername}/`;
   }
+  const serializedAccounts = accounts.map((candidate) => {
+    const data = candidate.toObject() as unknown as Record<string, unknown>;
+    delete data.igAccessToken;
+    if (data.igUsername) data.webUrl = `https://www.instagram.com/${data.igUsername}/`;
+    return data;
+  });
   res.json({
     success: true,
     data: {
       isConnected: Boolean(account?.isConnected),
       account: accountData || null,
+      accounts: serializedAccounts,
     },
   });
 });

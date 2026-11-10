@@ -19,10 +19,12 @@ import adminRoutes from './modules/iam/admin';
 import creatorsRoutes from './modules/storefront/creators';
 import linksRoutes from './modules/storefront/links';
 import productsRoutes from './modules/storefront/products';
+import storefrontPagesRoutes from './modules/storefront/pages';
 import discoveryRoutes from './modules/campaigns/discovery';
 import aiMatchingRoutes from './modules/campaigns/aiMatching';
 import brandCampaignsRoutes from './modules/campaigns/brandCampaigns';
 import paymentRoutes from './modules/payments/razorpay';
+import academyRoutes from './modules/academy/academy';
 import { CANONICAL_FRONTEND_URL } from './config/frontend';
 
 const app = express();
@@ -96,10 +98,12 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/creators', creatorsRoutes);
 app.use('/api/links', linksRoutes);
 app.use('/api/products', productsRoutes);
+app.use(storefrontPagesRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/discovery', aiMatchingRoutes); // Merges routes
 app.use('/api/brand-campaigns', brandCampaignsRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/academy', academyRoutes);
 
 // ─── Error Handling ────────────────────────────────────────────────────────────
 app.use(notFound);

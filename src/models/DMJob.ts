@@ -31,6 +31,7 @@ const DMJobSchema = new Schema<IDMJob>(
     commentId: { type: String },
     message: { type: String, required: true },
     buttons: [{
+      _id: false,
       type: { type: String, enum: ['web_url', 'postback'] },
       title: { type: String },
       url: { type: String },

@@ -79,7 +79,37 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     trackButtonClicks,
     attachmentUrl,
     buttons,
+    primaryDm: primaryDmFromBody,
   } = body;
+
+  // Normalise buttons array — up to 3 web_url buttons from the form
+  type ButtonDef = { type: 'web_url'; title: string; url: string };
+  // Some clients send the composer fields at the top level while older
+  // clients send them inside `primaryDm`. Read both shapes before persisting
+  // so a DM-triggered rule cannot silently lose its CTA buttons.
+  const primaryDmInput = primaryDmFromBody && typeof primaryDmFromBody === 'object' ? primaryDmFromBody : {};
+  const rawButtons = Array.isArray(buttons) && buttons.length > 0 ? buttons : primaryDmInput.buttons;
+  const rawButtonLabel = buttonLabel ?? primaryDmInput.buttonLabel;
+  const rawButtonUrl = buttonUrl ?? primaryDmInput.buttonUrl;
+  const rawPrimaryDmType = primaryDmType ?? primaryDmInput.type;
+  const normalizedButtons: ButtonDef[] = Array.isArray(rawButtons)
+    ? (rawButtons as any[])
+        .filter((b) => b?.title?.trim() && b?.url?.trim())
+        .slice(0, 3)
+        .map((b) => ({ type: 'web_url' as const, title: String(b.title).trim().substring(0, 20), url: String(b.url).trim() }))
+    : rawButtonUrl?.trim() && rawButtonLabel?.trim()
+    ? [{ type: 'web_url' as const, title: String(rawButtonLabel).trim().substring(0, 20), url: String(rawButtonUrl).trim() }]
+    : ctaLink?.trim()
+    ? [{ type: 'web_url' as const, title: (rawButtonLabel && String(rawButtonLabel).trim().substring(0, 20)) || 'Open Link', url: String(ctaLink).trim() }]
+    : [];
+
+  const parsedPrimaryDm = {
+    type: normalizedButtons.length > 0 ? ('TEXT_BUTTON' as const) : (rawPrimaryDmType === 'TEXT_BUTTON' ? ('TEXT_BUTTON' as const) : ('TEXT' as const)),
+    buttonLabel: normalizedButtons[0]?.title || String(rawButtonLabel || '').trim().substring(0, 20),
+    buttonUrl: normalizedButtons[0]?.url || String(rawButtonUrl || ctaLink || '').trim(),
+    trackButtonClicks: Boolean(trackButtonClicks ?? primaryDmInput.trackButtonClicks),
+    buttons: normalizedButtons,
+  };
 
   if (triggerFromBody && flowFromBody) {
     const flow = (flowFromBody as IAutomationFlowStep[]).map((step) => ({
@@ -99,6 +129,11 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
           ? (body.publicReply?.messages ?? body.publicReplyMessages).map((message: unknown) => String(message).trim()).filter(Boolean).slice(0, 3)
           : String(body.publicReply?.message ?? publicReplyMessage ?? '').split(/\r?\n/).map((message) => message.trim()).filter(Boolean).slice(0, 3),
       },
+      aiFallback: { enabled: Boolean(aiFallback), instruction: String(aiFallbackInstruction || '').trim() },
+      excludedKeywords: String(excludedKeywords || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
+      delaySeconds: Number(delaySeconds) || 0,
+      preDms: Array.isArray(preDms) ? preDms.slice(0, 2).map((item: any) => ({ type: (item.type === 'EMAIL' ? 'EMAIL' : 'FOLLOW') as 'FOLLOW' | 'EMAIL', message: String(item.message || '').trim() })).filter((item: any) => item.message) : [],
+      primaryDm: parsedPrimaryDm,
     };
   }
 
@@ -155,7 +190,7 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     flowSteps.push({ step: 1, type: 'DELAY', delaySeconds: delay });
   }
 
-  if (requireFollow ?? true) {
+  if (Boolean(requireFollow)) {
     flowSteps.push({
       step: flowSteps.length + 1,
       type: 'CHECK_FOLLOW',
@@ -163,17 +198,6 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
       fallbackAction: 'SEND_FOLLOW_REQUIRED_DM',
     });
   }
-
-  // Normalise buttons array — up to 3 web_url buttons from the form
-  type ButtonDef = { type: 'web_url'; title: string; url: string };
-  const normalizedButtons: ButtonDef[] = Array.isArray(buttons)
-    ? (buttons as any[])
-        .filter((b) => b?.title?.trim() && b?.url?.trim())
-        .slice(0, 3)
-        .map((b) => ({ type: 'web_url' as const, title: String(b.title).trim(), url: String(b.url).trim() }))
-    : buttonUrl?.trim() && buttonLabel?.trim()
-    ? [{ type: 'web_url' as const, title: String(buttonLabel).trim(), url: String(buttonUrl).trim() }]
-    : [];
 
   flowSteps.push({
     step: flowSteps.length + 1,
@@ -192,13 +216,7 @@ const parseAutomationPayload = (body: any): IAutomationParsed => {
     excludedKeywords: String(excludedKeywords || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
     delaySeconds: delay,
     preDms: Array.isArray(preDms) ? preDms.slice(0, 2).map((item: any) => ({ type: (item.type === 'EMAIL' ? 'EMAIL' : 'FOLLOW') as 'FOLLOW' | 'EMAIL', message: String(item.message || '').trim() })).filter((item: any) => item.message) : [],
-    primaryDm: {
-      type: normalizedButtons.length > 0 ? 'TEXT_BUTTON' : (primaryDmType === 'TEXT_BUTTON' ? 'TEXT_BUTTON' : 'TEXT'),
-      buttonLabel: normalizedButtons[0]?.title || String(buttonLabel || '').trim(),
-      buttonUrl: normalizedButtons[0]?.url || String(buttonUrl || '').trim(),
-      trackButtonClicks: Boolean(trackButtonClicks),
-      buttons: normalizedButtons,
-    },
+    primaryDm: parsedPrimaryDm,
   };
 };
 
@@ -245,7 +263,8 @@ const formatAutomation = (auto: any) => {
 
 // GET /api/automations
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  const requestedAccountId = typeof req.query.instagramAccountId === 'string' ? req.query.instagramAccountId : '';
+  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true, ...(requestedAccountId ? { _id: requestedAccountId } : {}) }).select('_id igUserId');
   if (!account?.igUserId) {
     res.json({ success: true, data: { automations: [] } });
     return;
@@ -267,7 +286,8 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/automations
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId igUsername');
+  const requestedAccountId = typeof req.body?.instagramAccountId === 'string' ? req.body.instagramAccountId : '';
+  const instagramAccount = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true, ...(requestedAccountId ? { _id: requestedAccountId } : {}) }).select('_id igUserId igUsername');
   if (!instagramAccount) {
     throw new AppError('Connect your Instagram account before creating an automation.', 409);
   }

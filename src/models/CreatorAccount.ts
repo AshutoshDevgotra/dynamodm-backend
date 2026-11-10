@@ -18,6 +18,10 @@ export interface ICreatorAccount extends Document {
     avatar?: string;
     niche?: string;
     geography?: string;
+    followEnabled?: boolean;
+    followEmailOnly?: boolean;
+    followThankYouTitle?: string;
+    followThankYouDescription?: string;
     audienceDemographics?: {
       topAgeRanges: { age: string; percentage: number }[];
       topGenders: { gender: string; percentage: number }[];
@@ -29,6 +33,7 @@ export interface ICreatorAccount extends Document {
     pendingBalance: number;
     availableBalance: number;
     currency: string;
+    razorpayAccountId?: string;
   };
   embedding?: number[];
   createdAt: Date;
@@ -37,7 +42,9 @@ export interface ICreatorAccount extends Document {
 
 const CreatorAccountSchema = new Schema<ICreatorAccount>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  // A Creator subscription can connect up to five distinct IG identities.
+  // Do not make this unique; the pair (userId, igUserId) is the identity.
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     igUserId: { type: String },
     igUsername: { type: String },
     igAccessToken: { type: String, select: false }, // encrypted at rest
@@ -54,6 +61,10 @@ const CreatorAccountSchema = new Schema<ICreatorAccount>(
       avatar: { type: String },
       niche: { type: String },
       geography: { type: String },
+      followEnabled: { type: Boolean, default: true },
+      followEmailOnly: { type: Boolean, default: true },
+      followThankYouTitle: { type: String, maxlength: 120 },
+      followThankYouDescription: { type: String, maxlength: 500 },
       audienceDemographics: {
         topAgeRanges: [{ age: String, percentage: Number }],
         topGenders: [{ gender: String, percentage: Number }],
@@ -65,6 +76,7 @@ const CreatorAccountSchema = new Schema<ICreatorAccount>(
       pendingBalance: { type: Number, default: 0 },
       availableBalance: { type: Number, default: 0 },
       currency: { type: String, default: 'USD' }
+      ,razorpayAccountId: { type: String }
     },
     embedding: { type: [Number], select: false }
   },
