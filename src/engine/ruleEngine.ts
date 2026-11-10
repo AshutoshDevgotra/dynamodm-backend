@@ -274,7 +274,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
           creatorId,
           igUserId,
           recipientId: comment.from.id,
-          commentId: comment.id,
+          commentId: eventTriggerType === 'STORY_REPLY' ? undefined : comment.id,
           rule,
           message: 'First, follow us to receive the DM',
           username: comment.from.username,
@@ -289,7 +289,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     }
 
     for (const [index, preDm] of (rule.preDms || []).entries()) {
-      await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: comment.id, rule, message: preDm.message, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId: `${jobId}:pre:${index}` });
+      await queueCommentDM({ creatorId, igUserId, recipientId: comment.from.id, commentId: eventTriggerType === 'STORY_REPLY' ? undefined : comment.id, rule, message: preDm.message, username: comment.from.username, commentText: comment.text, postId: comment.media?.id, jobId: `${jobId}:pre:${index}` });
     }
     if (rule.preDms?.some((item) => item.type === 'EMAIL')) {
       logger.info(`📧 Email collection requested before primary DM for ${comment.from.id}`);
@@ -323,7 +323,7 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
       dmLogId: dmLog._id.toString(),
       creatorId, igUserId,
       recipientId: comment.from.id,
-      commentId: comment.id,
+      commentId: eventTriggerType === 'STORY_REPLY' ? undefined : comment.id,
       message: sendDmStep.content,
       attachmentUrl: sendDmStep.attachment,
       buttons: resolvePrimaryButtons(rule),
