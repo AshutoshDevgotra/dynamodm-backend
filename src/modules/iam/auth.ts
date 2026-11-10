@@ -33,7 +33,9 @@ import { sendOtpEmail } from '../../lib/email';
 const router = Router();
 const publicEmailDomains = new Set(['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'aol.com']);
 const allowedRoles = new Set(['CREATOR', 'BRAND']);
+const ADMIN_EMAIL = 'ashutoshdevgotra@gmail.com';
 const googleCallbackUrl = () => (process.env.GOOGLE_CALLBACK_URL?.trim() || 'https://api.v1.orangeflow.in/api/auth/google/callback');
+const isAdminEmail = (email: string) => email.trim().toLowerCase() === ADMIN_EMAIL;
 
 const normalizeRegistration = (body: Record<string, unknown>) => {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
@@ -94,6 +96,11 @@ router.post('/login', authLimiter, async (req: Request, res: Response): Promise<
 
   const passwordMatch = await user.comparePassword(password);
   if (!passwordMatch) throw new AppError('Invalid credentials.', 401);
+
+  if (isAdminEmail(user.email) && user.role !== 'ADMIN') {
+    user.role = 'ADMIN';
+    await user.save({ validateBeforeSave: false });
+  }
 
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   res.json({ success: true, data: { token, user: safeUser(user) } });
@@ -258,6 +265,10 @@ router.get('/google/callback', async (req: Request, res: Response): Promise<void
     existingUser.isVerified = true;
     if (!existingUser.avatar) existingUser.avatar = profile.picture;
     await existingUser.save({ validateBeforeSave: false });
+  }
+  if (isAdminEmail(user.email) && user.role !== 'ADMIN') {
+    user.role = 'ADMIN';
+    await user.save({ validateBeforeSave: false });
   }
   const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
   const clientUrl = getFrontendUrl();
