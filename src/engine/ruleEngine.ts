@@ -34,6 +34,15 @@ export interface DMMessage {
   postback?: { title?: string; payload: string };
 }
 
+export function extractStoryReplyId(message?: DMMessage['message']): string | undefined {
+  const replyStory = message?.reply_to?.story;
+  const attachmentStory = (message?.attachments || []).find((attachment) =>
+    attachment.type === 'story_reply' || attachment.type === 'story'
+  );
+  const storyId = replyStory?.id || replyStory?.url || attachmentStory?.payload?.url;
+  return storyId ? String(storyId) : undefined;
+}
+
 type FollowButton = { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string };
 
 function followButtons(ruleId: string, igUsername: string): FollowButton[] {
@@ -72,6 +81,8 @@ interface WebhookPayload {
         text?: string;
         id?: string;
         media?: { id: string };
+        reply_to?: { story?: { id?: string; url?: string } };
+        attachments?: Array<{ type?: string; payload?: { url?: string } }>;
         item?: string;
         verb?: string;
       };
@@ -135,21 +146,22 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
     // Process comment changes
     if (entry.changes) {
       for (const change of entry.changes) {
-        if (['comments', 'feed', 'live_comments', 'live_comment', 'story_replies', 'story_reply'].includes(change.field)) {
-          const commentData = change.value;
+        if (['comments', 'feed', 'live_comments', 'live_comment', 'story_replies', 'story_reply', 'messages'].includes(change.field)) {
+          const commentData = (change.value as any).message || change.value;
+          const storyId = extractStoryReplyId(commentData);
           if ((!commentData.verb || commentData.verb === 'add') && commentData.from && commentData.text) {
             const mediaId = commentData.media?.id || (commentData as any).media_id;
             const mediaProductType = String((commentData.media as any)?.media_product_type || (commentData.media as any)?.product_type || '').toUpperCase();
             const triggerType = change.field.startsWith('live_') || mediaProductType === 'LIVE'
               ? 'LIVE_COMMENT'
-              : change.field.startsWith('story_')
+              : change.field.startsWith('story_') || Boolean(storyId)
               ? 'STORY_REPLY'
               : 'COMMENT';
             const comment: CommentEvent = {
               from: commentData.from,
               text: commentData.text,
               id: commentData.id || '',
-              media: mediaId ? { id: mediaId } : undefined,
+              media: storyId ? { id: storyId } : mediaId ? { id: mediaId } : undefined,
               triggerType,
             };
             await handleComment(creatorId, creatorAccount.igUserId!, comment, creatorAccount.igAccessToken, creatorAccount.igUsername);
@@ -166,7 +178,7 @@ export async function processWebhookEvent(payload: WebhookPayload): Promise<void
           continue;
         }
         if (!msg.message || msg.message.is_echo || !msg.message.text) continue;
-        const storyId = msg.message.reply_to?.story?.id || (msg.message.attachments || []).find((attachment) => attachment.type === 'story_reply' || attachment.type === 'story')?.payload?.url;
+        const storyId = extractStoryReplyId(msg.message);
         if (storyId) {
           await handleComment(creatorId, creatorAccount.igUserId!, {
             from: { id: msg.sender.id },
@@ -370,17 +382,27 @@ async function queuePrimaryAfterEmail(input: {
   igUserId: string;
   recipientId: string;
   rule: IAutomation;
-  messageId: string;
 }): Promise<void> {
-  const { creatorId, igUserId, recipientId, rule, messageId } = input;
+  const { creatorId, igUserId, recipientId, rule } = input;
   const sendDmStep = rule.flow.find((step) => step.type === 'SEND_DM' && step.role !== 'PRE_DM');
-  if (!sendDmStep?.content) return;
+  if (!sendDmStep?.content) {
+    logger.warn(`Email automation ${rule._id} has no primary SEND_DM step`);
+    return;
+  }
 
   const lead = await Lead.findOne({ creatorId, instagramUserId: recipientId, automationRuleId: rule._id });
-  if (!lead) return;
+  if (!lead) {
+    logger.warn(`Email automation ${rule._id} has no lead for Instagram user ${recipientId}`);
+    return;
+  }
 
-  const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:email:${messageId}`).digest('hex');
-  if (await DMJob.exists({ jobId })) return;
+  // Keep this idempotent across repeated email replies. The primary DM should
+  // be sent once for an email-gated automation, not once per webhook message.
+  const jobId = crypto.createHash('sha256').update(`${creatorId}:${rule._id}:email:${recipientId}`).digest('hex');
+  if (await DMJob.exists({ jobId })) {
+    logger.info(`Skipping duplicate email continuation for Instagram user ${recipientId}`);
+    return;
+  }
   await assertUsageAvailable(creatorId, 'dms');
   const dmLog = await DMLog.create({
     creatorId,
@@ -486,23 +508,23 @@ async function handleDM(creatorId: string, igUserId: string, msg: DMMessage, enc
   // Email-collection flows ask the recipient to reply with an address. Save a
   // valid reply to the creator's lead even when it is not itself an automation
   // keyword, so the request is useful rather than just cosmetic.
-  const emailMatch = messageText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase();
+  const emailMatch = String(messageText || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase();
   if (emailMatch) {
     const existingLead = await Lead.exists({ creatorId, instagramUserId: fromId });
     if (!existingLead) await assertUsageAvailable(creatorId, 'leads');
-    await Lead.findOneAndUpdate(
+    const lead = await Lead.findOneAndUpdate(
       { creatorId, instagramUserId: fromId },
       { $set: { email: emailMatch, source: 'manual' }, $setOnInsert: { creatorId, instagramUserId: fromId, username: 'Unknown' } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
-    const pendingLead = await Lead.findOne({ creatorId, instagramUserId: fromId, automationRuleId: { $exists: true } });
-    if (pendingLead?.automationRuleId) {
-      const pendingRule = await Automation.findOne({ _id: pendingLead.automationRuleId, creatorId, instagramUserId: igUserId, isActive: true });
-      if (pendingRule?.preDms?.some((item) => item.type === 'EMAIL')) {
-        await queuePrimaryAfterEmail({ creatorId, igUserId, recipientId: fromId, rule: pendingRule, messageId });
-        return;
-      }
+    const pendingRule = lead?.automationRuleId
+      ? await Automation.findOne({ _id: lead.automationRuleId, creatorId, instagramUserId: igUserId, isActive: true })
+      : null;
+    if (pendingRule?.preDms?.some((item) => item.type === 'EMAIL')) {
+      await queuePrimaryAfterEmail({ creatorId, igUserId, recipientId: fromId, rule: pendingRule });
+      return;
     }
+    logger.info(`No pending email automation found for Instagram user ${fromId}`);
   }
 
   const rules = await Automation.find({ creatorId, instagramUserId: igUserId, isActive: true, 'trigger.type': 'DM' });

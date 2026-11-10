@@ -22,6 +22,12 @@ const attachmentUpload = multer({
   },
 });
 
+const PUBLIC_API_URL = (process.env.PUBLIC_API_URL || process.env.API_PUBLIC_URL || 'https://api.v1.orangeflow.in').replace(/\/+$/, '');
+
+function publicAttachmentUrl(id: string, originalName: string): string {
+  return `${PUBLIC_API_URL}/api/automations/attachment/public/${id}/${encodeURIComponent(originalName)}`;
+}
+
 // Local type aliases to keep the POST handler readable
 type IAutomationTrigger = {
   type: 'COMMENT' | 'KEYWORD' | 'STORY_REPLY' | 'LIVE_COMMENT' | 'DM';
@@ -54,6 +60,18 @@ const normalizeKeywords = (value: unknown): string[] => {
 };
 
 const router = Router();
+// Instagram must be able to fetch media without an Authorization header. The
+// id is an unguessable Mongo ObjectId and the route only exposes the uploaded
+// attachment itself; automation management and upload remain protected below.
+router.get('/attachment/public/:id/:filename?', async (req: AuthRequest, res: Response): Promise<void> => {
+  const attachment = await AutomationAttachment.findById(req.params.id);
+  if (!attachment) throw new AppError('Attachment not found.', 404);
+  res.set('Content-Type', attachment.mimeType);
+  res.set('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.originalName)}"`);
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(attachment.data);
+});
+
 router.use(authenticate, requireActiveSubscription);
 
 const parseAutomationPayload = (body: any): IAutomationParsed => {
@@ -384,7 +402,7 @@ router.post('/attachment', attachmentUpload.single('file'), async (req: AuthRequ
       name: attachment.originalName,
       size: attachment.size,
       mimeType: attachment.mimeType,
-      url: `/api/automations/attachment/${attachment._id}`,
+      url: publicAttachmentUrl(attachment._id.toString(), attachment.originalName),
     },
   });
 });

@@ -4,6 +4,35 @@ import { logger } from '../utils/logger';
 const INSTAGRAM_API = `https://graph.instagram.com/v23.0`;
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 
+function isImageAttachmentUrl(url?: string): boolean {
+  if (!url) return false;
+  try {
+    return /\.(jpe?g|png|webp|gif)$/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isPdfAttachmentUrl(url?: string): boolean {
+  if (!url) return false;
+  try {
+    return /\.pdf$/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function addPdfButton(
+  buttons: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[] | undefined,
+  attachmentUrl?: string,
+) {
+  if (!isPdfAttachmentUrl(attachmentUrl)) return buttons;
+  const current = buttons ? [...buttons] : [];
+  if (current.some((button) => button.type === 'web_url' && button.url === attachmentUrl)) return current;
+  if (current.length >= 3) return current;
+  return [...current, { type: 'web_url' as const, title: 'Get PDF', url: attachmentUrl }];
+}
+
 export function isInstagramSessionInvalidated(error: unknown): boolean {
   const message = String((error as any)?.message || '').toLowerCase();
   return message.includes('session has been invalidated')
@@ -264,7 +293,7 @@ export async function sendDM(
   buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[],
   attachmentUrl?: string
 ): Promise<{ mid: string }> {
-  const cleanButtons = sanitizeIGButtons(buttons);
+  const cleanButtons = sanitizeIGButtons(addPdfButton(buttons, attachmentUrl));
 
   if (cleanButtons?.length) {
     const { title, subtitle } = formatTemplateText(message);
@@ -273,7 +302,7 @@ export async function sendDM(
       buttons: cleanButtons,
     };
     if (subtitle) element.subtitle = subtitle;
-    if (attachmentUrl && /^https?:\/\/.+\.(jpe?g|png|webp|gif)/i.test(attachmentUrl)) {
+    if (isImageAttachmentUrl(attachmentUrl)) {
       element.image_url = attachmentUrl;
     }
 
@@ -324,6 +353,16 @@ export async function sendDM(
   }
 
   try {
+    if (isImageAttachmentUrl(attachmentUrl)) {
+      await axios.post(
+        `${INSTAGRAM_API}/${igUserId}/messages`,
+        {
+          recipient: { id: recipientId },
+          message: { attachment: { type: 'image', payload: { url: attachmentUrl } } },
+        },
+        { params: { access_token: accessToken } },
+      );
+    }
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
@@ -346,7 +385,7 @@ export async function privateReplyToComment(
   buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[],
   attachmentUrl?: string
 ): Promise<{ mid: string }> {
-  const cleanButtons = sanitizeIGButtons(buttons);
+  const cleanButtons = sanitizeIGButtons(addPdfButton(buttons, attachmentUrl));
 
   if (cleanButtons?.length) {
     const { title, subtitle } = formatTemplateText(message);
@@ -355,7 +394,7 @@ export async function privateReplyToComment(
       buttons: cleanButtons,
     };
     if (subtitle) element.subtitle = subtitle;
-    if (attachmentUrl && /^https?:\/\/.+\.(jpe?g|png|webp|gif)/i.test(attachmentUrl)) {
+    if (isImageAttachmentUrl(attachmentUrl)) {
       element.image_url = attachmentUrl;
     }
 
@@ -406,6 +445,16 @@ export async function privateReplyToComment(
   }
 
   try {
+    if (isImageAttachmentUrl(attachmentUrl)) {
+      await axios.post(
+        `${INSTAGRAM_API}/${igUserId}/messages`,
+        {
+          recipient: { comment_id: commentId },
+          message: { attachment: { type: 'image', payload: { url: attachmentUrl } } },
+        },
+        { params: { access_token: accessToken } },
+      );
+    }
     const response = await axios.post(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {

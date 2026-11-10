@@ -1,4 +1,14 @@
-import { matchesKeyword } from './ruleEngine';
+import { extractStoryReplyId, matchesKeyword } from './ruleEngine';
+
+describe('extractStoryReplyId', () => {
+  it('supports the reply_to story payload used by Instagram messaging webhooks', () => {
+    expect(extractStoryReplyId({ mid: 'mid-123', reply_to: { story: { id: 'story-123' } } })).toBe('story-123');
+  });
+
+  it('supports story reply attachment payloads', () => {
+    expect(extractStoryReplyId({ mid: 'mid-456', attachments: [{ type: 'story_reply', payload: { url: 'story-url' } }] })).toBe('story-url');
+  });
+});
 
 describe('matchesKeyword', () => {
   it('matches case-insensitively with surrounding punctuation and whitespace', () => {
