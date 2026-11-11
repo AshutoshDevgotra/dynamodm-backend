@@ -1,5 +1,5 @@
 /**
- * OrangeFlow Diwali Extended Offer — Server-side Campaign Configuration
+ * OrangeFlow Creator Launch Offer — Server-side Campaign Configuration
  * Keep in sync with frontend lib/campaign.ts
  */
 
@@ -18,10 +18,10 @@ export interface ServerCampaignConfig {
 }
 
 export const SERVER_CAMPAIGN: ServerCampaignConfig = {
-  campaignId: 'diwali-extended-2026',
+  campaignId: 'creator-launch-2026',
   active: false,
   endDate: null, // Set to e.g. new Date('2026-11-30T23:59:59+05:30') to expire
-  plans: [],
+  plans: [{ planId: 'starter', regularPriceInr: 99, offerPriceInr: 0, introductoryCycles: 1 }],
 };
 
 /**

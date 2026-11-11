@@ -31,7 +31,7 @@ export interface ISubscription extends Document {
     customBranding: boolean;
   };
   // Campaign / introductory pricing fields
-  campaignId?: string;             // e.g. 'diwali-extended-2026'
+  campaignId?: string;             // e.g. 'creator-launch-2026'
   introductoryPriceInr?: number;   // Discounted price charged for intro cycles
   regularPriceInr?: number;        // Full price after intro period ends
   introductoryCycles?: number;     // Total intro billing cycles granted
