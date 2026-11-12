@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 
 import { User, IUser } from '../../models/User';
+import { PendingSignup } from '../../models/PendingSignup';
 import { Subscription } from '../../models/Subscription';
 import { hasUnlimitedAccess } from '../../config/access';
 import { Brand } from '../../models/Brand';
@@ -45,6 +47,7 @@ const normalizeRegistration = (body: Record<string, unknown>) => {
   if (!name || !email || !password) throw new AppError('Name, email, and password are required.', 400);
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new AppError('Please provide a valid email address.', 400);
   if (password.length < 8) throw new AppError('Password must be at least 8 characters.', 400);
+  if (/\s/.test(password)) throw new AppError('Password cannot contain spaces.', 400);
   if (!allowedRoles.has(requestedRole)) throw new AppError('Invalid registration role.', 400);
   return { name, email, password, role: requestedRole as 'CREATOR' | 'BRAND' };
 };
@@ -70,14 +73,22 @@ const createSignupRecords = async (data: { name: string; email: string; password
 router.post('/register', authLimiter, async (req: Request, res: Response): Promise<void> => {
   const data = normalizeRegistration(req.body);
   try {
-    const user = await createSignupRecords(data);
+    const existingUser = await User.findOne({ email: data.email }).select('_id');
+    if (existingUser) throw new AppError('Email already registered.', 409);
     const otp = createOtp();
-    user.verificationCodeHash = hashOtp(otp);
-    user.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
-    await user.save({ validateBeforeSave: false });
-    try { await sendOtpEmail(user.email, otp, 'verify'); } catch { /* Registration remains usable when email delivery is temporarily unavailable. */ }
-    const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
-    res.status(201).json({ success: true, data: { token, user: safeUser(user) } });
+    const pending = await PendingSignup.findOneAndUpdate(
+      { email: data.email },
+      {
+        ...data,
+        password: await bcrypt.hash(data.password, 12),
+        verificationCodeHash: hashOtp(otp),
+        verificationCodeExpiry: new Date(Date.now() + 10 * 60 * 1000),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    await sendOtpEmail(pending.email, otp, 'verify');
+    res.status(202).json({ success: true, message: 'Verification code sent to your email.', data: { email: pending.email } });
   } catch (error: any) {
     if (error?.code === 11000) throw new AppError('Email already registered.', 409);
     throw error;
@@ -92,7 +103,14 @@ router.post('/login', authLimiter, async (req: Request, res: Response): Promise<
   const user = await User.findOne({ email }).select('+password');
   if (!user || !user.password) throw new AppError('Invalid credentials.', 401);
   if (!user.isActive) throw new AppError('Account suspended. Contact support.', 403);
-  if (!user.isVerified) throw new AppError('Please verify your email before logging in.', 403);
+  if (!user.isVerified) {
+    const otp = createOtp();
+    user.verificationCodeHash = hashOtp(otp);
+    user.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+    await sendOtpEmail(user.email, otp, 'verify');
+    throw new AppError('Please verify your email. A new code has been sent.', 403);
+  }
 
   const passwordMatch = await user.comparePassword(password);
   if (!passwordMatch) throw new AppError('Invalid credentials.', 401);
@@ -110,6 +128,20 @@ router.post('/verify-email', authLimiter, async (req: Request, res: Response): P
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
   if (!email || !/^\d{6}$/.test(code)) throw new AppError('Email and a 6-digit code are required.', 400);
+  const pending = await PendingSignup.findOne({ email }).select('+password +verificationCodeHash +verificationCodeExpiry');
+  if (pending) {
+    if (pending.verificationCodeExpiry.getTime() < Date.now() || hashOtp(code) !== pending.verificationCodeHash) throw new AppError('Invalid or expired verification code.', 400);
+    try {
+      const user = await createSignupRecords({ name: pending.name, email: pending.email, password: pending.password, role: pending.role });
+      await PendingSignup.deleteOne({ _id: pending._id });
+      const token = generateToken({ id: user._id.toString(), role: user.role, email: user.email });
+      res.status(201).json({ success: true, message: 'Email verified successfully.', data: { token, user: safeUser(user) } });
+      return;
+    } catch (error: any) {
+      if (error?.code === 11000) throw new AppError('Email already registered.', 409);
+      throw error;
+    }
+  }
   const user = await User.findOne({ email }).select('+verificationCodeHash +verificationCodeExpiry +password');
   if (!user || !user.verificationCodeHash || !user.verificationCodeExpiry || user.verificationCodeExpiry.getTime() < Date.now() || hashOtp(code) !== user.verificationCodeHash) throw new AppError('Invalid or expired verification code.', 400);
   user.isVerified = true;
@@ -122,6 +154,17 @@ router.post('/verify-email', authLimiter, async (req: Request, res: Response): P
 
 router.post('/resend-verification', authLimiter, async (req: Request, res: Response): Promise<void> => {
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const pending = await PendingSignup.findOne({ email }).select('+verificationCodeHash +verificationCodeExpiry');
+  if (pending) {
+    const otp = createOtp();
+    pending.verificationCodeHash = hashOtp(otp);
+    pending.verificationCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    pending.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await pending.save({ validateBeforeSave: false });
+    await sendOtpEmail(pending.email, otp, 'verify');
+    res.json({ success: true, message: 'A new verification code has been sent.' });
+    return;
+  }
   const user = await User.findOne({ email });
   if (user && !user.isVerified) {
     const otp = createOtp();
@@ -152,6 +195,7 @@ router.post('/reset-password', authLimiter, async (req: Request, res: Response):
   const resetCode = typeof code === 'string' ? code.trim() : typeof token === 'string' ? token.trim() : '';
   if (!/^\S+@\S+\.\S+$/.test(email) || !/^\d{6}$/.test(resetCode)) throw new AppError('A valid email and 6-digit reset code are required.', 400);
   if (typeof password !== 'string' || password.length < 8) throw new AppError('Password must be at least 8 characters.', 400);
+  if (/\s/.test(password)) throw new AppError('Password cannot contain spaces.', 400);
   if (typeof confirmPassword !== 'string' || password !== confirmPassword) throw new AppError('Passwords do not match.', 400);
   const hashed = hashOtp(resetCode);
   const user = await User.findOne({ email, resetPasswordToken: hashed, resetPasswordExpiry: { $gt: Date.now() } }).select('+resetPasswordToken +resetPasswordExpiry +password');
