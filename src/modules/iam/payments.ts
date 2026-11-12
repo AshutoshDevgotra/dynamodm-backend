@@ -7,12 +7,14 @@ import { Payment } from '../../models/Payment';
 import { BrandCampaign } from '../../models/BrandCampaign';
 import { Brand } from '../../models/Brand';
 import { Transaction } from '../../models/Transaction';
+import { User } from '../../models/User';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { CheckoutPlan, PLANS, paidPlans } from '../../config/plans';
 import { addOneMonth, verifyRazorpaySignature } from '../../utils/razorpay';
 import { getCampaignOfferPrice, SERVER_CAMPAIGN } from '../../config/campaign';
 import { createRazorpayPlan, createRazorpaySubscription } from '../../services/razorpaySubscriptions';
+import { sendSubscriptionSuccessEmail } from '../../lib/subscription-email';
 
 const router = Router();
 
@@ -112,12 +114,14 @@ router.get('/plans', (_req: Request, res: Response): void => {
       automations: PLANS[id].automationLimit,
       leads: PLANS[id].leadsLimit,
       dms: PLANS[id].dmsLimit,
+      instagramAccounts: PLANS[id].instagramAccountsLimit,
       analyticsRetentionDays: PLANS[id].analyticsRetentionDays,
     },
     features: [
       `${PLANS[id].automationLimit === -1 ? 'Unlimited' : PLANS[id].automationLimit} Automations`,
       `${PLANS[id].leadsLimit === -1 ? 'Unlimited' : PLANS[id].leadsLimit.toLocaleString('en-IN')} Leads`,
       `${PLANS[id].dmsLimit === -1 ? 'Unlimited' : PLANS[id].dmsLimit.toLocaleString('en-IN')} DMs/month`,
+      `${PLANS[id].instagramAccountsLimit === -1 ? 'Unlimited' : PLANS[id].instagramAccountsLimit.toLocaleString('en-IN')} Instagram account${PLANS[id].instagramAccountsLimit === 1 ? '' : 's'}`,
       `${PLANS[id].analyticsRetentionDays}-day analytics`,
     ],
     selfServeCheckout: PLANS[id].selfServeCheckout,
@@ -129,7 +133,7 @@ router.get('/plans', (_req: Request, res: Response): void => {
       plans: [
         { ...planDetails('free', 'Starter'), publicName: 'Starter', description: 'Forever free for creators getting started.' },
         { ...planDetails('starter', 'Creator'), publicName: 'Creator', description: '₹0 for the first month, then ₹99/month.', mandateRequired: true },
-        { id: 'enterprise', name: 'Pro', publicName: 'Pro', price: null, currency: 'INR', interval: 'month', description: 'Tailored solutions for growing teams.', limits: { automations: -1, leads: -1, dms: -1, analyticsRetentionDays: 365 }, features: ['Custom landing pages', 'Dedicated Growth Manager', 'Dedicated Ads Manager', 'Dedicated WhatsApp support'], selfServeCheckout: false },
+        { id: 'enterprise', name: 'Pro', publicName: 'Pro', price: null, currency: 'INR', interval: 'month', description: 'Tailored solutions for growing teams.', limits: { automations: -1, leads: -1, dms: -1, instagramAccounts: 5, analyticsRetentionDays: 365 }, features: ['Up to 5 Instagram accounts', 'Custom landing pages', 'Dedicated Growth Manager', 'Dedicated Ads Manager', 'Dedicated WhatsApp support'], selfServeCheckout: false },
       ],
     },
   });
@@ -288,6 +292,25 @@ router.post('/verify', authenticate, async (req: AuthRequest, res: Response): Pr
 
   const subscription = await activateCapturedSubscription({ userId: req.user!.id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature, amount: order.amount, currency: order.currency, ...campaignArgs });
 
+  // Send subscription success email
+  try {
+    const user = await User.findById(req.user!.id);
+    if (user && subscription.currentPeriodEnd) {
+      const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
+      await sendSubscriptionSuccessEmail({
+        to: user.email,
+        name: user.name,
+        plan: planName,
+        dmLimit: PLANS[plan].dmsLimit,
+        amount: PLANS[plan].monthlyPriceInr as number,
+        nextBillingDate: subscription.currentPeriodEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+      });
+    }
+  } catch (emailError) {
+    logger.error('Failed to send subscription success email', emailError);
+    // Don't fail the request if email fails
+  }
+
   logger.info(`✅ Payment verified and subscription activated for user ${req.user!.id} (plan: ${subscription.plan})`);
   res.json({ success: true, data: { plan: subscription.plan, status: 'active', currentPeriodEnd: subscription.currentPeriodEnd } });
 });
@@ -322,7 +345,26 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
           regularPriceInr: Number(order.notes.regularPriceInr),
           introductoryCycles: Number(order.notes.introductoryCycles),
         } : {};
-        await activateCapturedSubscription({ userId, plan, orderId: payment.order_id, paymentId: payment.id, amount: payment.amount, currency: payment.currency, ...campaignArgs });
+        const subscription = await activateCapturedSubscription({ userId, plan, orderId: payment.order_id, paymentId: payment.id, amount: payment.amount, currency: payment.currency, ...campaignArgs });
+        
+        // Send subscription success email
+        try {
+          const user = await User.findById(userId);
+          if (user && subscription.currentPeriodEnd) {
+            const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
+            await sendSubscriptionSuccessEmail({
+              to: user.email,
+              name: user.name,
+              plan: planName,
+              dmLimit: PLANS[plan].dmsLimit,
+              amount: PLANS[plan].monthlyPriceInr as number,
+              nextBillingDate: subscription.currentPeriodEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+            });
+          }
+        } catch (emailError) {
+          logger.error('Failed to send subscription success email', emailError);
+          // Don't fail the webhook if email fails
+        }
       }
     }
   }

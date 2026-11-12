@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrangeFlow - Email Verification</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" type="text/css">
+  <style type="text/css">
+    body { margin:0; padding:0; }
+    table { border-collapse:collapse; }
+    @media only screen and (max-width:480px) {
+      .card-pad { padding:28px 20px 24px 20px !important; }
+      .otp-code { font-size:36px !important; letter-spacing:10px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#FFF8EB;">
+  <!-- Preheader -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#FFF8EB;">
+    Your OrangeFlow verification code: {{otp}}
+  </div>
+  
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFF8EB" style="background-color:#FFF8EB;">
+    <tr>
+      <td align="center" style="padding:0;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#FFF8EB;">
+          
+          <!-- Header Logo -->
+          <tr>
+            <td align="center" style="padding:36px 0 26px 0;font-family:'Syne',Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.03em;color:#1A1A1A;line-height:1;">
+              OrangeFlow<span style="color:#FF6B00;">.</span>
+            </td>
+          </tr>
+          
+          <!-- Card Wrapper -->
+          <tr>
+            <td style="padding:0 16px 32px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background-color:#FFFFFF;border:1px solid #F1E8DC;border-radius:20px;">
+                <tr>
+                  <td class="card-pad" style="padding:36px 32px 28px 32px;">
+                    
+                    <!-- Icon -->
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 20px auto;">
+                      <tr>
+                        <td align="center" valign="middle" width="64" height="64" bgcolor="#FFF3EE" style="width:64px;height:64px;border-radius:32px;background-color:#FFF3EE;font-size:32px;line-height:64px;">🔐</td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Heading -->
+                    <div style="margin:0 0 14px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:24px;font-weight:700;line-height:1.25;letter-spacing:-0.01em;color:#1A1A1A;text-align:center;">
+                      Verify Your Email
+                    </div>
+                    
+                    <div style="text-align:center;margin:0 0 24px 0;">
+                      <div style="display:inline-block;width:40px;height:3px;line-height:3px;font-size:3px;background-color:#FF6B00;border-radius:999px;"></div>
+                    </div>
+                    
+                    <!-- Message -->
+                    <div style="margin:0 0 28px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#4A4A4A;text-align:center;">
+                      Enter this code to verify your email address and complete your registration:
+                    </div>
+                    
+                    <!-- OTP Code Box -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFF3EE" style="background-color:#FFF3EE;border:2px solid #FFE2D0;border-radius:16px;margin:0 0 28px 0;">
+                      <tr>
+                        <td style="padding:32px 20px;text-align:center;">
+                          <div class="otp-code" style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:44px;font-weight:800;color:#FF6B00;letter-spacing:12px;line-height:1;">
+                            {{otp}}
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Expiry Notice -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F8F9FA" style="background-color:#F8F9FA;border-radius:12px;margin:0 0 28px 0;">
+                      <tr>
+                        <td style="padding:16px 20px;">
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.5;color:#6B6B6B;text-align:center;">
+                            ⏱️ This code <strong style="color:#1A1A1A;">expires in 10 minutes</strong>
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Security Note -->
+                    <div style="margin:0 0 20px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#6B6B6B;text-align:center;">
+                      If you didn't request this code, you can safely ignore this email. Someone may have entered your email address by mistake.
+                    </div>
+                    
+                    <!-- Support Link -->
+                    <div style="text-align:center;margin:0 0 10px 0;">
+                      <a href="https://orangeflow.in/support" target="_blank" style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13px;color:#FF6B00;text-decoration:none;font-weight:600;">Need help? Contact Support →</a>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:36px;">
+                      <tr>
+                        <td align="center" style="border-top:1px solid #F1E8DC;padding-top:22px;">
+                          <div style="font-family:'Syne',Arial,Helvetica,sans-serif;font-size:14px;font-weight:800;letter-spacing:-0.02em;color:#1A1A1A;margin:0 0 10px 0;">
+                            OrangeFlow<span style="color:#FF6B00;">.</span>
+                          </div>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12px;color:#6B6B6B;line-height:1.6;">
+                            Instagram Growth & Automation Platform<br>
+                            <a href="https://orangeflow.in" target="_blank" style="color:#6B6B6B;text-decoration:underline;">orangeflow.in</a>
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Bottom Strip -->
+          <tr>
+            <td align="center" style="padding:8px 0 40px 0;font-family:'Syne',Arial,Helvetica,sans-serif;font-size:11px;color:#B9A99A;letter-spacing:0.06em;font-weight:600;">
+              OrangeFlow<span style="color:#FF6B00;">.</span> &mdash; Grow Smarter on Instagram
+            </td>
+          </tr>
+          
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

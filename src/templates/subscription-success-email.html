@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to OrangeFlow - Subscription Confirmed</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Playfair+Display:wght@700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" type="text/css">
+  <style type="text/css">
+    body { margin:0; padding:0; }
+    table { border-collapse:collapse; }
+    @media only screen and (max-width:480px) {
+      .card-pad { padding:28px 20px 24px 20px !important; }
+      .hero { font-size:24px !important; }
+      .feature-cell { padding:12px 8px !important; }
+      .stat-value { font-size:28px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#FFF8EB;">
+  <!-- Preheader -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#FFF8EB;">
+    Your OrangeFlow subscription is active! Start automating your Instagram DMs today.
+  </div>
+  
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFF8EB" style="background-color:#FFF8EB;">
+    <tr>
+      <td align="center" style="padding:0;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#FFF8EB;">
+          
+          <!-- Header Logo: Syne -->
+          <tr>
+            <td align="center" style="padding:36px 0 26px 0;font-family:'Syne',Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.03em;color:#1A1A1A;line-height:1;">
+              OrangeFlow<span style="color:#FF6B00;">.</span>
+            </td>
+          </tr>
+          
+          <!-- Card Wrapper -->
+          <tr>
+            <td style="padding:0 16px 32px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background-color:#FFFFFF;border:1px solid #F1E8DC;border-radius:20px;">
+                <tr>
+                  <td class="card-pad" style="padding:36px 32px 28px 32px;">
+                    
+                    <!-- Success Badge -->
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 20px auto;">
+                      <tr>
+                        <td align="center" valign="middle" width="64" height="64" bgcolor="#E8F5E9" style="width:64px;height:64px;border-radius:32px;background-color:#E8F5E9;font-size:32px;line-height:64px;">✓</td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Hero: Playfair Display -->
+                    <div class="hero" style="margin:0 0 14px 0;font-family:'Playfair Display',Georgia,'Times New Roman',Times,serif;font-size:28px;font-weight:700;line-height:1.25;letter-spacing:-0.01em;color:#1A1A1A;text-align:center;">
+                      Welcome to OrangeFlow, {{name}}!
+                    </div>
+                    
+                    <div style="text-align:center;margin:0 0 24px 0;">
+                      <div style="display:inline-block;width:40px;height:3px;line-height:3px;font-size:3px;background-color:#FF6B00;border-radius:999px;"></div>
+                    </div>
+                    
+                    <!-- Intro: Inter -->
+                    <div style="margin:0 0 16px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:15.5px;line-height:1.7;color:#1A1A1A;text-align:center;">
+                      Your <span style="font-weight:700;color:#FF6B00;">{{plan}}</span> subscription is now active! 🎉<br>
+                      You're all set to automate Instagram DMs and grow your audience.
+                    </div>
+                    
+                    <!-- Subscription Details Box -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFF3EE" style="background-color:#FFF3EE;border:1px solid #FFE2D0;border-radius:12px;margin:0 0 28px 0;">
+                      <tr>
+                        <td style="padding:20px 22px;">
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;color:#B9A99A;margin:0 0 8px 0;">
+                            Your Subscription Details
+                          </div>
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;color:#6B6B6B;">Plan:</td>
+                              <td align="right" style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#1A1A1A;">{{plan}}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;color:#6B6B6B;">Auto DMs:</td>
+                              <td align="right" style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#FF6B00;">{{dmLimit}}/month</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;color:#6B6B6B;">Next billing:</td>
+                              <td align="right" style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1A1A1A;">{{nextBillingDate}}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;color:#6B6B6B;">Amount:</td>
+                              <td align="right" style="padding:6px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#1A1A1A;">₹{{amount}}/month</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- What's Next Section -->
+                    <div style="margin:0 0 20px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#1A1A1A;">
+                      🚀 Get started in 3 simple steps:
+                    </div>
+                    
+                    <!-- Steps -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 28px 0;">
+                      <tr>
+                        <td style="padding:0 0 16px 0;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="top" style="padding-right:12px;">
+                                <div style="width:28px;height:28px;border-radius:14px;background-color:#FF6B00;color:#FFFFFF;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;text-align:center;line-height:28px;">1</div>
+                              </td>
+                              <td valign="top">
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:14.5px;font-weight:700;color:#1A1A1A;margin:0 0 4px 0;">Connect Your Instagram</div>
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#6B6B6B;">Link your Instagram Professional account in 2 minutes.</div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 16px 0;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="top" style="padding-right:12px;">
+                                <div style="width:28px;height:28px;border-radius:14px;background-color:#FF6B00;color:#FFFFFF;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;text-align:center;line-height:28px;">2</div>
+                              </td>
+                              <td valign="top">
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:14.5px;font-weight:700;color:#1A1A1A;margin:0 0 4px 0;">Create Your First Automation</div>
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#6B6B6B;">Set a keyword like "GUIDE" and add your message with a link.</div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="top" style="padding-right:12px;">
+                                <div style="width:28px;height:28px;border-radius:14px;background-color:#FF6B00;color:#FFFFFF;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;text-align:center;line-height:28px;">3</div>
+                              </td>
+                              <td valign="top">
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:14.5px;font-weight:700;color:#1A1A1A;margin:0 0 4px 0;">Post & Watch It Work</div>
+                                <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#6B6B6B;">Create a reel asking followers to comment your keyword.</div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Features Grid -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 32px 0;">
+                      <tr>
+                        <td class="feature-cell" align="center" width="25%" valign="top" style="padding:0 6px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px auto;">
+                            <tr>
+                              <td align="center" valign="middle" width="44" height="44" bgcolor="#FFF3EE" style="width:44px;height:44px;border-radius:22px;background-color:#FFF3EE;font-size:18px;line-height:44px;">⚡</td>
+                            </tr>
+                          </table>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.35;color:#1A1A1A;font-weight:600;">
+                            Auto<br>DMs
+                          </div>
+                        </td>
+                        <td class="feature-cell" align="center" width="25%" valign="top" style="padding:0 6px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px auto;">
+                            <tr>
+                              <td align="center" valign="middle" width="44" height="44" bgcolor="#FFF3EE" style="width:44px;height:44px;border-radius:22px;background-color:#FFF3EE;font-size:18px;line-height:44px;">📈</td>
+                            </tr>
+                          </table>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.35;color:#1A1A1A;font-weight:600;">
+                            Lead<br>Capture
+                          </div>
+                        </td>
+                        <td class="feature-cell" align="center" width="25%" valign="top" style="padding:0 6px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px auto;">
+                            <tr>
+                              <td align="center" valign="middle" width="44" height="44" bgcolor="#FFF3EE" style="width:44px;height:44px;border-radius:22px;background-color:#FFF3EE;font-size:18px;line-height:44px;">🛍️</td>
+                            </tr>
+                          </table>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.35;color:#1A1A1A;font-weight:600;">
+                            Creator<br>Storefront
+                          </div>
+                        </td>
+                        <td class="feature-cell" align="center" width="25%" valign="top" style="padding:0 6px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px auto;">
+                            <tr>
+                              <td align="center" valign="middle" width="44" height="44" bgcolor="#FFF3EE" style="width:44px;height:44px;border-radius:22px;background-color:#FFF3EE;font-size:18px;line-height:44px;">📊</td>
+                            </tr>
+                          </table>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.35;color:#1A1A1A;font-weight:600;">
+                            Analytics<br>Dashboard
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- CTA Button -->
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 8px auto;">
+                      <tr>
+                        <td align="center" bgcolor="#FF6B00" style="background-color:#FF6B00;border-radius:12px;padding:14px 32px;">
+                          <a href="https://orangeflow.in/creator" target="_blank" style="display:inline-block;font-family:Inter,Helvetica,Arial,sans-serif;font-size:14.5px;font-weight:700;color:#FFFFFF;text-decoration:none;letter-spacing:-0.01em;">
+                            Go to Dashboard →
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <div style="text-align:center;margin:12px 0 24px 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:11.5px;color:#B9A99A;letter-spacing:0.02em;">
+                      Start automating in under 5 minutes
+                    </div>
+                    
+                    <!-- Support Section -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F8F9FA" style="background-color:#F8F9FA;border-radius:12px;margin:0 0 28px 0;">
+                      <tr>
+                        <td style="padding:20px 22px;">
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13px;font-weight:700;color:#1A1A1A;margin:0 0 8px 0;">
+                            Need help getting started?
+                          </div>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#6B6B6B;">
+                            We're here to help! Email us at <a href="mailto:support@orangeflow.in" style="color:#FF6B00;text-decoration:none;font-weight:600;">support@orangeflow.in</a> or check out our <a href="https://orangeflow.in/learn" target="_blank" style="color:#FF6B00;text-decoration:none;font-weight:600;">quick start guide</a>.
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Footer -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:36px;">
+                      <tr>
+                        <td align="center" style="border-top:1px solid #F1E8DC;padding-top:22px;">
+                          <!-- Footer Logo: Syne -->
+                          <div style="font-family:'Syne',Arial,Helvetica,sans-serif;font-size:14px;font-weight:800;letter-spacing:-0.02em;color:#1A1A1A;margin:0 0 10px 0;">
+                            OrangeFlow<span style="color:#FF6B00;">.</span>
+                          </div>
+                          <div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:12px;color:#6B6B6B;line-height:1.6;">
+                            Instagram Growth & Automation Platform<br>
+                            <a href="mailto:support@orangeflow.in" style="color:#6B6B6B;text-decoration:underline;">
+                              support@orangeflow.in
+                            </a><br>
+                            <a href="https://orangeflow.in" target="_blank" style="color:#6B6B6B;text-decoration:underline;">
+                              Website
+                            </a>
+                             &middot; 
+                            <a href="https://orangeflow.in/blog" target="_blank" style="color:#6B6B6B;text-decoration:underline;">
+                              Blog
+                            </a>
+                             &middot; 
+                            <a href="https://orangeflow.in/pricing" target="_blank" style="color:#6B6B6B;text-decoration:underline;">
+                              Pricing
+                            </a>
+                          </div>
+                          
+                          <!-- Manage Subscription -->
+                          <div style="margin:16px 0 0 0;font-family:Inter,Helvetica,Arial,sans-serif;font-size:11.5px;line-height:1.6;color:#8A8A8A;text-align:center;">
+                            <a href="https://orangeflow.in/creator/payments/subscriptions" target="_blank" style="color:#8A8A8A;text-decoration:underline;">Manage your subscription</a>
+                             &middot; 
+                            <a href="https://orangeflow.in/privacy" target="_blank" style="color:#8A8A8A;text-decoration:underline;">Privacy Policy</a>
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Bottom Strip -->
+          <tr>
+            <td align="center" style="padding:8px 0 40px 0;font-family:'Syne',Arial,Helvetica,sans-serif;font-size:11px;color:#B9A99A;letter-spacing:0.06em;font-weight:600;">
+              OrangeFlow<span style="color:#FF6B00;">.</span> &mdash; Grow Smarter on Instagram
+            </td>
+          </tr>
+          
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
