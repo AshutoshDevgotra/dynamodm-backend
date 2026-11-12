@@ -26,9 +26,9 @@ export async function sendOtpEmail(to: string, otp: string, purpose: OtpPurpose)
     await transporter.sendMail({
       from,
       to,
-      subject: `DynamoDM ${label} code`,
-      text: `Your DynamoDM ${label} code is ${otp}. It expires in 10 minutes.`,
-      html: `<p>Your DynamoDM ${label} code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>`,
+      subject: `OrangeFlow ${label} code`,
+      text: `Your OrangeFlow ${label} code is ${otp}. It expires in 10 minutes.`,
+      html: `<p>Your OrangeFlow ${label} code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>`,
     });
   } catch (error: any) {
     logger.error('Resend SMTP delivery failed', {
