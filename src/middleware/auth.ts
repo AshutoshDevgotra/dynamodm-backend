@@ -35,14 +35,15 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 };
 
 /**
- * Middleware: Ensures the user has an ACTIVE paid subscription.
- * Free-tier (no subscription or status !== 'active') users are blocked with HTTP 402.
+ * Middleware: Ensures the user has access to an active plan or unexpired trial.
+ * Users without valid subscription access are blocked with HTTP 402.
  * Attach this after `authenticate` on paid-only routes.
  */
 export const requireSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
-  if (!subscription || subscription.status !== 'active') {
+  const hasAccess = subscription && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || subscription.currentPeriodEnd.getTime() > Date.now());
+  if (!hasAccess) {
     res.status(402).json({
       success: false,
       message: 'Active subscription required. Please upgrade your plan to access this feature.',
@@ -58,7 +59,7 @@ export const requirePaidSubscription = async (req: AuthRequest, res: Response, n
   if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
-  const paid = subscription && ['starter', 'pro', 'premium', 'enterprise'].includes(subscription.plan) && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
+  const paid = subscription && ['starter', 'pro', 'premium', 'enterprise'].includes(subscription.plan) && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || validUntil);
   if (!paid) {
     res.status(402).json({
       success: false,
@@ -77,7 +78,7 @@ export const requireActiveSubscription = async (req: AuthRequest, res: Response,
   if (hasUnlimitedAccess(req.user)) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
-  const active = subscription && subscription.status === 'active' && (!subscription.currentPeriodEnd || validUntil);
+  const active = subscription && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || validUntil);
   if (!active) {
     res.status(402).json({
       success: false,

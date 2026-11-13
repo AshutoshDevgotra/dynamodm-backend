@@ -1,6 +1,6 @@
 jest.mock('../models/Subscription', () => ({ Subscription: { findOne: jest.fn() } }));
 
-import { requirePaidSubscription } from './auth';
+import { requirePaidSubscription, requireSubscription } from './auth';
 import { Subscription } from '../models/Subscription';
 
 const findOne = Subscription.findOne as jest.Mock;
@@ -23,7 +23,7 @@ describe('requirePaidSubscription', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it.each(['active'])('allows an active paid subscription', async (status) => {
+  it.each(['active', 'trialing'])('allows an active or trialing paid subscription', async (status) => {
     findOne.mockResolvedValue({ plan: 'pro', status, currentPeriodEnd: new Date(Date.now() + 86400000) });
     const req: any = { user: { id: 'u1', role: 'CREATOR' } };
     const res = makeResponse();
@@ -38,6 +38,20 @@ describe('requirePaidSubscription', () => {
     const res = makeResponse();
     await requirePaidSubscription({ user: { id: 'u1', role: 'CREATOR' } }, res, jest.fn());
     expect(res.status).toHaveBeenCalledWith(402);
+  });
+
+  it('blocks a trial after its end date', async () => {
+    findOne.mockResolvedValue({ plan: 'starter', status: 'trialing', currentPeriodEnd: new Date(Date.now() - 1) });
+    const res = makeResponse();
+    await requirePaidSubscription({ user: { id: 'u1', role: 'CREATOR' } }, res, jest.fn());
+    expect(res.status).toHaveBeenCalledWith(402);
+  });
+
+  it('allows trialing users through the general subscription guard', async () => {
+    findOne.mockResolvedValue({ plan: 'starter', status: 'trialing', currentPeriodEnd: new Date(Date.now() + 86400000) });
+    const next = jest.fn();
+    await requireSubscription({ user: { id: 'u1', role: 'CREATOR' } }, makeResponse(), next);
+    expect(next).toHaveBeenCalled();
   });
 
   it('allows admins without a subscription', async () => {

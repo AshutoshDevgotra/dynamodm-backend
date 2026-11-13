@@ -21,8 +21,9 @@ export async function sendSubscriptionSuccessEmail(data: SubscriptionEmailData):
   const from = (process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL)?.trim();
   
   if (!host || !user || !pass || !from) {
-    logger.warn('SMTP not configured, skipping subscription success email');
-    return;
+    const error = new Error('SMTP is not configured for subscription success emails.');
+    logger.error(error.message);
+    throw error;
   }
 
   const port = Number(process.env.SMTP_PORT || 465);
@@ -98,6 +99,6 @@ https://orangeflow.in
       to: data.to,
       error: error?.message,
     });
-    // Don't throw error - email failure shouldn't break subscription activation
+    throw error;
   }
 }

@@ -211,7 +211,7 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
   const unlimitedAccess = hasUnlimitedAccess(req.user);
   const subscriptionData = subscription ? {
     plan: unlimitedAccess ? 'enterprise' : subscription.plan,
-    status: unlimitedAccess ? 'active' : subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now() && subscription.status === 'active' ? 'expired' : subscription.status,
+    status: unlimitedAccess ? 'active' : subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now() && ['active', 'trialing'].includes(subscription.status) ? (subscription.cancelAtPeriodEnd ? 'cancelled' : 'expired') : subscription.status,
     currentPeriodEnd: subscription.currentPeriodEnd || null,
     isUnlimited: unlimitedAccess,
   } : unlimitedAccess ? { plan: 'enterprise', status: 'active', currentPeriodEnd: null, isUnlimited: true } : null;

@@ -38,7 +38,7 @@ const getCreatorSubscriptionPlanId = (): string => {
 const activateCreatorMandate = async (input: { userId: string; subscriptionId: string; paymentId?: string; status: 'trialing' | 'active'; startAt: Date }) => {
   const subscription = await Subscription.findOneAndUpdate(
     { userId: input.userId },
-    { $set: { userId: input.userId, plan: 'starter', status: input.status, provider: 'razorpay', razorpaySubscriptionId: input.subscriptionId, providerOrderId: input.subscriptionId, providerPaymentId: input.paymentId, startedAt: new Date(), trialEnd: input.startAt, currentPeriodStart: input.startAt, currentPeriodEnd: addOneMonth(input.startAt), cancelAtPeriodEnd: false, features: getSubscriptionFeatures('starter') } },
+    { $set: { userId: input.userId, plan: 'starter', status: input.status, provider: 'razorpay', razorpaySubscriptionId: input.subscriptionId, providerOrderId: input.subscriptionId, providerPaymentId: input.paymentId, startedAt: new Date(), trialEnd: input.startAt, currentPeriodStart: new Date(), currentPeriodEnd: input.startAt, cancelAtPeriodEnd: false, features: getSubscriptionFeatures('starter') } },
     { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
   );
   if (input.paymentId) {
@@ -170,7 +170,6 @@ router.post('/create-subscription', authenticate, async (req: AuthRequest, res: 
     logger.error(`Razorpay subscription creation error: ${errMsg}`, error?.error);
     throw new AppError(`Subscription setup failed: ${errMsg}`, 502);
   }
-  await activateCreatorMandate({ userId: req.user!.id, subscriptionId: razorpaySubscription.id, status: 'trialing', startAt });
   res.json({ success: true, data: { subscriptionId: razorpaySubscription.id, keyId: process.env.RAZORPAY_KEY_ID, planName: 'Creator', recurringAmountInr: 99, authorizationAmountInr: 1, trialEnd: startAt.toISOString() } });
 });
 
@@ -184,6 +183,21 @@ router.post('/verify-subscription', authenticate, async (req: AuthRequest, res: 
   if (razorpaySubscription?.notes?.userId !== req.user!.id || razorpaySubscription?.plan_id !== getCreatorSubscriptionPlanId()) throw new AppError('Subscription does not belong to this account.', 403);
   const startAt = new Date(Number(razorpaySubscription.start_at) * 1000);
   const subscription = await activateCreatorMandate({ userId: req.user!.id, subscriptionId: razorpay_subscription_id, paymentId: razorpay_payment_id, status: 'trialing', startAt });
+  try {
+    const user = await User.findById(req.user!.id);
+    if (user && subscription.trialEnd) {
+      await sendSubscriptionSuccessEmail({
+        to: user.email,
+        name: user.name,
+        plan: PLANS.starter.publicName,
+        dmLimit: PLANS.starter.dmsLimit,
+        amount: PLANS.starter.monthlyPriceInr as number,
+        nextBillingDate: subscription.trialEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+      });
+    }
+  } catch (emailError) {
+    logger.error('Failed to send subscription success email', emailError);
+  }
   res.json({ success: true, data: { plan: subscription.plan, status: subscription.status, trialEnd: subscription.trialEnd, currentPeriodEnd: subscription.currentPeriodEnd } });
 });
 
@@ -374,17 +388,23 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   if (event.event === 'payment.failed') {
     const payment = event.payload?.payment?.entity;
     if (payment?.order_id) await Payment.findOneAndUpdate({ providerOrderId: payment.order_id }, { status: 'failed' });
+    if (payment?.subscription_id) {
+      await Subscription.findOneAndUpdate(
+        { razorpaySubscriptionId: payment.subscription_id },
+        { $set: { status: 'cancelled', cancelledAt: new Date() } },
+      );
+    }
   }
 
-  if (['subscription.activated', 'subscription.pending', 'subscription.halted', 'subscription.completed'].includes(event.event)) {
+  if (['subscription.activated', 'subscription.charged', 'subscription.halted', 'subscription.completed'].includes(event.event)) {
     const sub = event.payload?.subscription?.entity;
     if (sub?.id) {
-      const status = event.event === 'subscription.activated' ? 'active'
-        : event.event === 'subscription.halted' ? 'past_due'
+      const status = event.event === 'subscription.charged' ? 'active'
+        : event.event === 'subscription.halted' ? 'cancelled'
           : event.event === 'subscription.completed' ? 'expired' : 'trialing';
       await Subscription.findOneAndUpdate(
         { razorpaySubscriptionId: sub.id },
-        { $set: { status, ...(sub.current_start ? { currentPeriodStart: new Date(sub.current_start * 1000) } : {}), ...(sub.current_end ? { currentPeriodEnd: new Date(sub.current_end * 1000) } : {}) } },
+        { $set: { status, ...(status === 'active' ? { cancelAtPeriodEnd: false } : {}), ...(event.event === 'subscription.charged' && sub.current_start ? { currentPeriodStart: new Date(sub.current_start * 1000) } : {}), ...(event.event === 'subscription.charged' && sub.current_end ? { currentPeriodEnd: new Date(sub.current_end * 1000) } : {}) } },
       );
     }
   }
@@ -408,19 +428,22 @@ router.get('/invoices', authenticate, async (req: AuthRequest, res: Response): P
 // GET /api/payments/subscription
 router.get('/subscription', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   const subscription = await Subscription.findOne({ userId: req.user!.id });
-  res.json({ success: true, data: { subscription } });
+  const isEnded = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now();
+  const status = subscription && isEnded && ['active', 'trialing'].includes(subscription.status)
+    ? (subscription.cancelAtPeriodEnd ? 'cancelled' : 'expired')
+    : subscription?.status;
+  res.json({ success: true, data: { subscription: subscription ? { ...subscription.toObject(), status } : null } });
 });
 
 // POST /api/payments/cancel
 router.post('/cancel', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
-  const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
+  const subscription = await Subscription.findOne({ userId: req.user!.id, status: { $in: ['trialing', 'active'] } });
   if (!subscription) throw new AppError('No active subscription found.', 400);
 
   subscription.cancelAtPeriodEnd = true;
-  subscription.status = 'cancelled';
   await subscription.save();
 
-  res.json({ success: true, message: 'Subscription cancelled.' });
+  res.json({ success: true, data: { status: subscription.status, cancelAtPeriodEnd: true, currentPeriodEnd: subscription.currentPeriodEnd }, message: 'Your access continues through the current period. The scheduled Razorpay payment may still be attempted.' });
 });
 
 export default router;
