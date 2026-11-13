@@ -11,7 +11,7 @@ import { User } from '../../models/User';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { CheckoutPlan, PLANS, paidPlans } from '../../config/plans';
-import { addOneMonth, verifyRazorpaySignature } from '../../utils/razorpay';
+import { addOneMonth, addOneYear, verifyRazorpaySignature } from '../../utils/razorpay';
 import { getCampaignOfferPrice, SERVER_CAMPAIGN } from '../../config/campaign';
 import { createRazorpayPlan, createRazorpaySubscription } from '../../services/razorpaySubscriptions';
 import { sendSubscriptionSuccessEmail } from '../../lib/subscription-email';
@@ -155,11 +155,13 @@ router.post('/create-subscription', authenticate, async (req: AuthRequest, res: 
     res.json({ success: true, data: { subscriptionId: existing.razorpaySubscriptionId, keyId: process.env.RAZORPAY_KEY_ID, planName: 'Creator', recurringAmountInr: 99, authorizationAmountInr: 1, trialEnd: existing.trialEnd } });
     return;
   }
-  const startAt = addOneMonth(new Date());
+  const createdAt = new Date();
+  const startAt = addOneMonth(createdAt);
+  const endAt = addOneYear(createdAt);
   let razorpaySubscription: any;
   try {
     razorpaySubscription = await createRazorpaySubscription({
-      planId: getCreatorSubscriptionPlanId(), totalCount: 1200, quantity: 1, startAt,
+      planId: getCreatorSubscriptionPlanId(), endAt, quantity: 1, startAt,
       addons: [{ item: { name: 'Creator subscription authorization', amount: 100, currency: 'INR', description: 'One-time authorization payment for the free first month' } }],
       notes: { userId: req.user!.id, plan: 'starter', trialEnd: startAt.toISOString(), recurringAmountInr: '99' },
     });

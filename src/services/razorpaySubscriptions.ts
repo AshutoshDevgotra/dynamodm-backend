@@ -36,7 +36,7 @@ export async function createRazorpayPlan({ planId, notes }: CreatePlanOptions) {
 
 export interface CreateSubscriptionOptions {
   planId: string;
-  totalCount: number;
+  endAt: Date;
   quantity?: number;
   startAt: Date;
   addons?: Array<{ item: { name: string; amount: number; currency: 'INR'; description?: string }; quantity?: number }>;
@@ -47,11 +47,10 @@ export interface CreateSubscriptionOptions {
 
 /** Creates a Razorpay Subscription and logs the returned subscription ID. */
 export async function createRazorpaySubscription(options: CreateSubscriptionOptions) {
-  if (!options.planId || options.totalCount < 1 || !Number.isInteger(options.totalCount)) throw new AppError('A valid Razorpay plan ID and billing cycle count are required.', 400);
   try {
     const subscription = await (getClient() as any).subscriptions.create({
       plan_id: options.planId,
-      total_count: options.totalCount,
+      end_at: Math.floor(options.endAt.getTime() / 1000),
       quantity: options.quantity ?? 1,
       customer_notify: true,
       start_at: Math.floor(options.startAt.getTime() / 1000),

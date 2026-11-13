@@ -10,3 +10,11 @@ export function addOneMonth(date: Date): Date {
   result.setMonth(result.getMonth() + 1);
   return result;
 }
+
+export function addOneYear(date: Date): Date {
+  const result = new Date(date);
+  const month = result.getUTCMonth();
+  result.setUTCFullYear(result.getUTCFullYear() + 1);
+  if (result.getUTCMonth() !== month) result.setUTCDate(0);
+  return result;
+}
