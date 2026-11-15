@@ -1,4 +1,31 @@
-import { formatTemplateText, sanitizeIGButtons } from './instagram';
+import axios from 'axios';
+import { formatTemplateText, getMedia, sanitizeIGButtons } from './instagram';
+
+jest.mock('axios');
+const axiosGet = axios.get as jest.Mock;
+
+describe('getMedia', () => {
+  beforeEach(() => axiosGet.mockReset());
+
+  it('fetches posts and reels using cursors on the fixed Graph endpoint', async () => {
+    axiosGet.mockResolvedValueOnce({ data: { data: [{ id: 'post', media_product_type: 'FEED' }], paging: { next: 'http://127.0.0.1/private', cursors: { after: 'cursor 1' } } } });
+    axiosGet.mockResolvedValueOnce({ data: { data: [{ id: 'reel', media_product_type: 'REELS' }] } });
+    await expect(getMedia('123', 'secret', 2)).resolves.toEqual([{ id: 'post', media_product_type: 'FEED' }, { id: 'reel', media_product_type: 'REELS' }]);
+    expect(axiosGet).toHaveBeenCalledTimes(2);
+    expect(axiosGet.mock.calls[1][0]).toBe('https://graph.instagram.com/v23.0/123/media');
+    expect(axiosGet.mock.calls[1][1]).toMatchObject({ params: { after: 'cursor 1', limit: 1, access_token: 'secret' }, maxRedirects: 0 });
+  });
+
+  it('fails on API errors, invalid responses, and repeated cursors', async () => {
+    axiosGet.mockRejectedValueOnce(new Error('network failure'));
+    await expect(getMedia('123', 'secret')).rejects.toThrow('network failure');
+    axiosGet.mockResolvedValueOnce({ data: {} });
+    await expect(getMedia('123', 'secret')).rejects.toThrow('Invalid Instagram media response');
+    const page = { data: { data: [], paging: { next: 'https://elsewhere', cursors: { after: 'same' } } } };
+    axiosGet.mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+    await expect(getMedia('123', 'secret')).rejects.toThrow('pagination cursor');
+  });
+});
 
 describe('formatTemplateText', () => {
   it('strips newlines and normalizes whitespace in message title and subtitle', () => {

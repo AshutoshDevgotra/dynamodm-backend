@@ -9,8 +9,8 @@ import { hasUnlimitedAccess } from '../config/access';
 type UsageKind = 'leads' | 'dms';
 
 export async function assertUsageAvailable(userId: string, kind: UsageKind): Promise<void> {
-  const user = await User.findById(userId).select('email role').lean();
-  if (hasUnlimitedAccess(user || undefined)) return;
+  const user = await User.findById(userId).select('email role isHouseOfOrange').lean();
+  if (hasUnlimitedAccess(user || undefined) || user?.isHouseOfOrange === true) return;
 
   const subscription = await Subscription.findOne({ userId, status: 'active' });
   if (!subscription || (subscription.currentPeriodEnd && subscription.currentPeriodEnd.getTime() <= Date.now())) {

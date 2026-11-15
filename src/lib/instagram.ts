@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { logger } from '../utils/logger';
+import { getRandomMessageVariation } from '../utils/messageVariations';
 
 const INSTAGRAM_API = `https://graph.instagram.com/v23.0`;
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
@@ -165,15 +166,33 @@ export async function getMedia(
   fields = 'id,caption,media_url,thumbnail_url,permalink,like_count,comments_count,timestamp,media_type,media_product_type'
 ): Promise<IGMedia[]> {
   try {
-    const response = await axios.get(`${INSTAGRAM_API}/${igUserId}/media`, {
-      params: {
-        fields,
-        limit,
-        access_token: accessToken,
-      },
-    });
-
-    return response.data.data || [];
+    const media: IGMedia[] = [];
+    const seenCursors = new Set<string>();
+    let after: string | undefined;
+    let pageCount = 0;
+    while (media.length < limit) {
+      if (++pageCount > 100) throw new Error('Instagram media pagination exceeded the page limit');
+      // Never request paging.next: it is external input and may point off-site.
+      const response = await axios.get(`${INSTAGRAM_API}/${encodeURIComponent(igUserId)}/media`, {
+        params: {
+          fields,
+          limit: limit - media.length,
+          access_token: accessToken,
+          ...(after ? { after } : {}),
+        },
+        maxRedirects: 0,
+      });
+      if (!Array.isArray(response.data?.data)) throw new Error('Invalid Instagram media response');
+      media.push(...response.data.data.slice(0, limit - media.length));
+      if (media.length >= limit || !response.data.paging?.next) break;
+      const cursor = response.data.paging?.cursors?.after;
+      if (typeof cursor !== 'string' || !cursor || seenCursors.has(cursor)) {
+        throw new Error('Invalid Instagram media pagination cursor');
+      }
+      seenCursors.add(cursor);
+      after = cursor;
+    }
+    return media;
   } catch (error) {
     handleIGError(error, 'getMedia');
   }
@@ -385,10 +404,13 @@ export async function privateReplyToComment(
   buttons?: { type: 'web_url' | 'postback'; title: string; url?: string; payload?: string }[],
   attachmentUrl?: string
 ): Promise<{ mid: string }> {
+  // Apply random variation to avoid bot detection
+  const variedMessage = getRandomMessageVariation(message);
+  
   const cleanButtons = sanitizeIGButtons(addPdfButton(buttons, attachmentUrl));
 
   if (cleanButtons?.length) {
-    const { title, subtitle } = formatTemplateText(message);
+    const { title, subtitle } = formatTemplateText(variedMessage);
     const element: any = {
       title,
       buttons: cleanButtons,
@@ -420,7 +442,7 @@ export async function privateReplyToComment(
         error: (genericErr as any)?.response?.data?.error?.message || (genericErr as Error)?.message,
       });
       try {
-        const cleanText = message.replace(/[\r\n]+/g, ' ').trim().substring(0, 640);
+        const cleanText = variedMessage.replace(/[\r\n]+/g, ' ').trim().substring(0, 640);
         const buttonPayload = {
           recipient: { comment_id: commentId },
           message: {
@@ -459,7 +481,7 @@ export async function privateReplyToComment(
       `${INSTAGRAM_API}/${igUserId}/messages`,
       {
         recipient: { comment_id: commentId },
-        message: { text: message },
+        message: { text: variedMessage },
       },
       { params: { access_token: accessToken } }
     );

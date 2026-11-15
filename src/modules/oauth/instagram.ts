@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
 import mongoose from 'mongoose';
@@ -19,8 +19,53 @@ import {
   INSTAGRAM_REQUIRED_SCOPES,
 } from '../../config/instagram';
 import { getFrontendUrl } from '../../config/frontend';
-import { Subscription } from '../../models/Subscription';
+
 import { PLANS } from '../../config/plans';
+import { hasUnlimitedAccess } from '../../config/access';
+
+const requireInstagramAccess = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (req.user?.isHouseOfOrange === true) { next(); return; }
+  await requireActiveSubscription(req, res, next);
+};
+
+// Re-run the same authentication and subscription guards used at OAuth start.
+// The browser does not send its bearer token to the callback, so use a short-lived
+// internal token to resolve the current user and membership rather than trusting state.
+async function getCallbackAccess(userId: string): Promise<AuthRequest> {
+  const request: AuthRequest = {
+    headers: { authorization: `Bearer ${jwt.sign({ id: userId }, process.env.JWT_SECRET as string, { expiresIn: '1m' })}` },
+  };
+  let status = 403;
+  let message = 'Access denied.';
+  const response: any = {
+    status(code: number) { status = code; return this; },
+    json(body: any) { message = body?.message || message; return this; },
+  };
+  let authenticated = false;
+  await authenticate(request, response, () => { authenticated = true; });
+  if (!authenticated) throw new AppError(message, status);
+  let authorized = false;
+  await requireInstagramAccess(request, response, () => { authorized = true; });
+  if (!authorized) throw new AppError(message, status);
+  return request;
+}
+
+function accountLimit(request: AuthRequest): number {
+  if (request.user.role?.toUpperCase() === 'ADMIN' && hasUnlimitedAccess(request.user)) return -1;
+  if (request.user.isHouseOfOrange === true) return 5;
+  if (hasUnlimitedAccess(request.user)) return -1;
+  return request.subscription?.features?.instagramAccountsLimit
+    ?? PLANS[request.subscription?.plan as keyof typeof PLANS]?.instagramAccountsLimit
+    ?? PLANS.free.instagramAccountsLimit;
+}
+
+function selectedAccountId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !mongoose.isValidObjectId(value)) {
+    throw new AppError('Invalid Instagram account ID.', 400);
+  }
+  return value;
+}
 
 const router = Router();
 const INSTAGRAM_API = 'https://graph.instagram.com/v23.0';
@@ -58,24 +103,20 @@ async function subscribeInstagramWebhooks(instagramUserId: string, accessToken: 
   logger.info(`✅ Subscribed Instagram account ${instagramUserId} to comment, live-comment, story-reply, and message webhooks`);
 }
 
-router.get('/login', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/login', authenticate, requireInstagramAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const token = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice(7).trim()
     : '';
   if (!token) throw new AppError('A valid session is required to connect Instagram.', 401);
-  const [connectedCount, subscription] = await Promise.all([
-    CreatorAccount.countDocuments({ userId: req.user!.id, isConnected: true }),
-    Subscription.findOne({ userId: req.user!.id, status: 'active' }).select('plan features'),
-  ]);
-  const limit = subscription?.features?.instagramAccountsLimit ?? PLANS.free.instagramAccountsLimit;
-  if (limit !== -1 && connectedCount >= limit) throw new AppError(`Your plan allows ${limit} connected Instagram account${limit === 1 ? '' : 's'}. Upgrade to connect more.`, 403);
+  // The Instagram identity is only known at callback time; checking here would
+  // prevent an account already at its limit from reconnecting an existing identity.
   const redirectUri = getInstagramCallbackUrl();
   logger.info('Starting Instagram OAuth flow', { redirectUri });
   const authUrl = buildInstagramBusinessLoginUrl({
     clientId: process.env.INSTAGRAM_APP_ID as string,
     redirectUri,
     state: jwt.sign(
-      { sub: req.user!.id, purpose: 'instagram_oauth', nonce: crypto.randomBytes(16).toString('hex') },
+      { sub: req.user!.id, purpose: 'instagram_oauth', wasHouseOfOrange: req.user!.isHouseOfOrange === true, nonce: crypto.randomBytes(16).toString('hex') },
       process.env.JWT_SECRET as string,
       { expiresIn: '10m' },
     ),
@@ -84,7 +125,7 @@ router.get('/login', authenticate, requireActiveSubscription, async (req: AuthRe
   res.json({ success: true, data: { authUrl } });
 });
 
-router.get('/profile/lookup', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/profile/lookup', authenticate, requireInstagramAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const raw = typeof req.query.handle === 'string' ? req.query.handle : typeof req.query.url === 'string' ? req.query.url : '';
   const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
   const username = raw.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/^@/, '').split(/[/?#]/)[0].trim().toLowerCase();
@@ -132,16 +173,22 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
   }
 
   let userId = '';
+  let wasHouseOfOrange = false;
   try {
-    const decoded = jwt.verify(state, process.env.JWT_SECRET as string) as { sub?: string; purpose?: string };
+    const decoded = jwt.verify(state, process.env.JWT_SECRET as string) as { sub?: string; purpose?: string; wasHouseOfOrange?: boolean };
     if (decoded.purpose !== 'instagram_oauth' || !decoded.sub) throw new Error('Invalid OAuth state');
     userId = decoded.sub;
+    wasHouseOfOrange = decoded.wasHouseOfOrange === true;
   } catch (err) {
     res.status(401).send('Access denied. Invalid or missing session token in state.');
     return;
   }
 
   try {
+    const callbackRequest = await getCallbackAccess(userId);
+    if (wasHouseOfOrange && callbackRequest.user.isHouseOfOrange !== true) {
+      throw new AppError('House of Orange membership is no longer active.', 403);
+    }
     const shortLivedRes = await exchangeCodeForToken(
       code,
       process.env.INSTAGRAM_APP_ID as string,
@@ -163,6 +210,23 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     const igProfile = await getProfile(igUserId, longToken);
     const instagramUserId = igProfile.user_id || igUserId;
     logger.info(`✅ Fetched IG profile: @${igProfile.username} (${instagramUserId})`);
+
+    // Revalidate immediately before modifying any account, including records owned
+    // by other users, since access or limits may have changed during OAuth.
+    const currentRequest = await getCallbackAccess(userId);
+    if (wasHouseOfOrange && currentRequest.user.isHouseOfOrange !== true) {
+      throw new AppError('House of Orange membership is no longer active.', 403);
+    }
+    const limit = accountLimit(currentRequest);
+    if (limit !== -1) {
+      const [existing, connectedCount] = await Promise.all([
+        CreatorAccount.findOne({ userId, igUserId: instagramUserId, isConnected: true }),
+        CreatorAccount.countDocuments({ userId, isConnected: true }),
+      ]);
+      if (!existing && connectedCount >= limit) {
+        throw new AppError(`Your plan allows ${limit} connected Instagram account${limit === 1 ? '' : 's'}. Upgrade to connect more.`, 403);
+      }
+    }
 
     await CreatorAccount.updateMany(
       { igUserId: instagramUserId, userId: { $ne: new mongoose.Types.ObjectId(userId) } },
@@ -219,11 +283,11 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     res.redirect(302, `${frontendUrl}/creator`);
   } catch (error: any) {
     logger.error('Instagram OAuth callback error:', error);
-    res.status(400).send(`Authentication failed: ${error.message}`);
+    res.status(error instanceof AppError ? error.statusCode : 400).send(`Authentication failed: ${error.message}`);
   }
 });
 
-router.get('/status', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/status', authenticate, requireInstagramAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const accounts = await CreatorAccount.find({ userId: req.user!.id }).sort({ updatedAt: -1 }).select('+igAccessToken');
   const account = accounts.find((candidate) => candidate.isConnected) || accounts[0];
   if (account?.isConnected && account.igAccessToken && account.igUserId) {
@@ -261,10 +325,12 @@ router.get('/status', authenticate, requireActiveSubscription, async (req: AuthR
   });
 });
 
-router.get('/posts', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/posts', authenticate, requireInstagramAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('+igAccessToken');
+    const accountId = selectedAccountId(req.query.instagramAccountId);
+    const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true, ...(accountId ? { _id: accountId } : {}) }).select('+igAccessToken');
     if (!account || !account.igAccessToken || !account.igUserId) {
+      if (accountId) throw new AppError('Connected Instagram account not found.', 404);
       res.json({ success: true, data: { posts: [] } });
       return;
     }
@@ -282,16 +348,18 @@ router.get('/posts', authenticate, requireActiveSubscription, async (req: AuthRe
     }
 
     const posts = await getMedia(instagramUserId, token, 30);
-    res.json({ success: true, data: { posts: posts || [] } });
+    res.json({ success: true, data: { posts } });
   } catch (err: any) {
+    if (err instanceof AppError) throw err;
     logger.error('Failed to fetch Instagram posts:', err?.message || err);
-    res.json({ success: true, data: { posts: [] } });
+    throw new AppError('Unable to fetch Instagram posts.', 502);
   }
 });
 
-router.delete('/disconnect', authenticate, requireActiveSubscription, async (req: AuthRequest, res: Response): Promise<void> => {
-  await CreatorAccount.findOneAndUpdate(
-    { userId: req.user!.id },
+router.delete('/disconnect', authenticate, requireInstagramAccess, async (req: AuthRequest, res: Response): Promise<void> => {
+  const accountId = selectedAccountId(req.query.instagramAccountId ?? req.body?.instagramAccountId);
+  const account = await CreatorAccount.findOneAndUpdate(
+    { userId: req.user!.id, isConnected: true, ...(accountId ? { _id: accountId } : {}) },
     {
       $set: { isConnected: false, scopes: [] },
       $unset: {
@@ -307,6 +375,7 @@ router.delete('/disconnect', authenticate, requireActiveSubscription, async (req
       },
     }
   );
+  if (accountId && !account) throw new AppError('Connected Instagram account not found.', 404);
   res.json({ success: true, message: 'Instagram account disconnected.' });
 });
 

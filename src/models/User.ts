@@ -11,6 +11,7 @@ export interface IUser extends Document {
   googleId?: string;
   isVerified: boolean;
   isActive: boolean;
+  isHouseOfOrange: boolean;
   status: 'ACTIVE' | 'BANNED' | 'PENDING';
   resetPasswordToken?: string;
   resetPasswordExpiry?: Date;
@@ -32,6 +33,7 @@ const UserSchema = new Schema<IUser>(
     googleId: { type: String, unique: true, sparse: true },
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    isHouseOfOrange: { type: Boolean, default: false },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpiry: { type: Date, select: false },
     verificationCodeHash: { type: String, select: false },

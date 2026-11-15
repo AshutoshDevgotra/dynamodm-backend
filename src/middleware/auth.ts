@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
 import { Subscription } from '../models/Subscription';
-import { hasUnlimitedAccess } from '../config/access';
+import { hasUnlimitedAccess, isHouseOfOrangeMember } from '../config/access';
 
 export type AuthRequest = any;
 
@@ -20,14 +20,26 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { id: string; role: string; email: string };
-    const user = await User.findById(decoded.id).select('_id role email isActive');
+    const user = await User.findById(decoded.id).select('_id role email isActive isHouseOfOrange');
 
     if (!user || !user.isActive) {
       res.status(401).json({ success: false, message: 'User not found or account suspended.' });
       return;
     }
 
-    req.user = { id: user._id.toString(), role: user.role, email: user.email };
+    // Check if user's email is in House of Orange list and update if needed
+    const shouldBeHouseOfOrange = isHouseOfOrangeMember(user.email);
+    if (user.isHouseOfOrange !== shouldBeHouseOfOrange) {
+      user.isHouseOfOrange = shouldBeHouseOfOrange;
+      await user.save();
+    }
+
+    req.user = { 
+      id: user._id.toString(), 
+      role: user.role, 
+      email: user.email,
+      isHouseOfOrange: user.isHouseOfOrange 
+    };
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired token.' });
@@ -38,9 +50,10 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
  * Middleware: Ensures the user has access to an active plan or unexpired trial.
  * Users without valid subscription access are blocked with HTTP 402.
  * Attach this after `authenticate` on paid-only routes.
+ * House of Orange members and admins bypass this check.
  */
 export const requireSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  if (hasUnlimitedAccess(req.user)) { next(); return; }
+  if (hasUnlimitedAccess(req.user) || req.user?.isHouseOfOrange === true) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const hasAccess = subscription && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || subscription.currentPeriodEnd.getTime() > Date.now());
   if (!hasAccess) {
@@ -56,7 +69,7 @@ export const requireSubscription = async (req: AuthRequest, res: Response, next:
 };
 
 export const requirePaidSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  if (hasUnlimitedAccess(req.user)) { next(); return; }
+  if (hasUnlimitedAccess(req.user) || req.user?.isHouseOfOrange === true) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
   const paid = subscription && ['starter', 'pro', 'premium', 'enterprise'].includes(subscription.plan) && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || validUntil);
@@ -73,9 +86,9 @@ export const requirePaidSubscription = async (req: AuthRequest, res: Response, n
   next();
 };
 
-/** Allows the active Free workspace as well as paid plans. */
+/** Allows the active Free workspace as well as paid plans. House of Orange members bypass this. */
 export const requireActiveSubscription = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  if (hasUnlimitedAccess(req.user)) { next(); return; }
+  if (hasUnlimitedAccess(req.user) || req.user?.isHouseOfOrange === true) { next(); return; }
   const subscription = await Subscription.findOne({ userId: req.user!.id });
   const validUntil = subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > Date.now();
   const active = subscription && ['active', 'trialing'].includes(subscription.status) && (!subscription.currentPeriodEnd || validUntil);

@@ -327,13 +327,13 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     throw new AppError('Connect your Instagram account before creating an automation.', 409);
   }
 
-  const subscription = await Subscription.findOne({ userId: req.user!.id, status: 'active' });
+  const subscription = await Subscription.findOne({ userId: req.user!.id, status: { $in: ['active', 'trialing'] } });
 
   // Free tier: 1 automation max (no paid subscription)
   const maxAutomations = subscription ? PLANS[subscription.plan].automationLimit : 1;
   const count = await Automation.countDocuments({ creatorId: req.user!.id });
 
-  if (!hasUnlimitedAccess(req.user) && maxAutomations !== -1 && count >= maxAutomations) {
+  if (req.user.isHouseOfOrange !== true && !hasUnlimitedAccess(req.user) && maxAutomations !== -1 && count >= maxAutomations) {
     if (!subscription) {
       throw new AppError('Free plan allows 1 automation. Upgrade to Pro or Premium to add more.', 402);
     }
@@ -353,22 +353,38 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   res.status(201).json({ success: true, data: { automation: formatAutomation(automation) } });
 });
 
+// Resolve the rule first, then verify its exact bound Instagram identity is
+// still connected and owned by the same user. Never infer a binding from the
+// user's first account or match missing account identifiers.
+async function findOwnedConnectedAutomation(req: AuthRequest) {
+  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id });
+  if (!automation?.instagramAccountId || !automation.instagramUserId) {
+    throw new AppError('Automation not found.', 404);
+  }
+  const account = await CreatorAccount.findOne({
+    _id: automation.instagramAccountId,
+    userId: req.user!.id,
+    isConnected: true,
+    igUserId: automation.instagramUserId,
+  }).select('_id');
+  if (!account) throw new AppError('Automation not found.', 404);
+  return automation;
+}
+
 // GET /api/automations/:id
 router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
-  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
-  if (!automation) throw new AppError('Automation not found.', 404);
+  const automation = await findOwnedConnectedAutomation(req);
   res.json({ success: true, data: { automation: formatAutomation(automation) } });
 });
 
 // PUT /api/automations/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const parsed = parseAutomationPayload(req.body);
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  const existing = await findOwnedConnectedAutomation(req);
 
   const automation = await Automation.findOneAndUpdate(
-    { _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId },
-    { $set: { ...parsed, ...(account ? { instagramAccountId: account._id, instagramUserId: account.igUserId } : {}) } },
+    { _id: req.params.id, creatorId: req.user!.id, instagramAccountId: existing.instagramAccountId, instagramUserId: existing.instagramUserId },
+    { $set: parsed },
     { new: true, runValidators: true }
   );
   if (!automation) throw new AppError('Automation not found.', 404);
@@ -377,9 +393,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
 // PATCH /api/automations/:id/toggle
 router.patch('/:id/toggle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
-  const automation = await Automation.findOne({ _id: req.params.id, creatorId: req.user!.id, instagramAccountId: account?._id, instagramUserId: account?.igUserId });
-  if (!automation) throw new AppError('Automation not found.', 404);
+  const automation = await findOwnedConnectedAutomation(req);
   automation.isActive = !automation.isActive;
   await automation.save();
   res.json({ success: true, data: { automation, isActive: automation.isActive } });
