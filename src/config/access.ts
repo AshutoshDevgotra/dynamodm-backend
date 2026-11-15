@@ -6,14 +6,6 @@ const configuredUnlimitedEmails = (process.env.ADMIN_UNLIMITED_EMAILS || 'ashuto
 
 const unlimitedEmails = new Set(configuredUnlimitedEmails);
 
-/** House of Orange member emails - get unlimited features without subscription */
-const configuredHouseOfOrangeEmails = (process.env.HOUSE_OF_ORANGE_EMAILS || '')
-  .split(',')
-  .map((email) => email.trim().toLowerCase())
-  .filter(Boolean);
-
-const houseOfOrangeEmails = new Set(configuredHouseOfOrangeEmails);
-
 /** Instagram user IDs that bypass cooling period (for testing/VIP accounts). */
 const configuredNoCooldownInstagramIds = (process.env.NO_COOLDOWN_INSTAGRAM_IDS || '17841434768105686')
   .split(',')
@@ -27,9 +19,7 @@ export function hasUnlimitedAccess(user?: { email?: string; role?: string }): bo
     || (typeof user?.email === 'string' && unlimitedEmails.has(user.email.trim().toLowerCase()));
 }
 
-export function isHouseOfOrangeMember(email?: string): boolean {
-  return typeof email === 'string' && houseOfOrangeEmails.has(email.trim().toLowerCase());
-}
+export { isHouseOfOrangeMember } from './houseOfOrange';
 
 export function bypassesCoolingPeriod(instagramUserId: string): boolean {
   return noCooldownInstagramIds.has(instagramUserId.trim());

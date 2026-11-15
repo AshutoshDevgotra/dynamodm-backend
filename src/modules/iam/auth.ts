@@ -52,7 +52,7 @@ const normalizeRegistration = (body: Record<string, unknown>) => {
   return { name, email, password, role: requestedRole as 'CREATOR' | 'BRAND' };
 };
 
-const safeUser = (user: IUser) => ({ id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar });
+const safeUser = (user: IUser) => ({ id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar, isHouseOfOrange: user.isHouseOfOrange });
 const createOtp = () => String(crypto.randomInt(100000, 1000000));
 const hashOtp = (otp: string) => crypto.createHash('sha256').update(otp).digest('hex');
 

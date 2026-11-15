@@ -348,6 +348,11 @@ router.get('/posts', authenticate, requireInstagramAccess, async (req: AuthReque
     }
 
     const posts = await getMedia(instagramUserId, token, 30);
+    
+    // Debug logging to troubleshoot reels visibility
+    const postTypes = posts.map(p => ({ id: p.id, media_type: p.media_type, media_product_type: p.media_product_type }));
+    logger.info(`Fetched ${posts.length} posts for @${profile.username}:`, postTypes);
+    
     res.json({ success: true, data: { posts } });
   } catch (err: any) {
     if (err instanceof AppError) throw err;
