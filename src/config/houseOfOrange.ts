@@ -17,11 +17,7 @@
  */
 
 export const HOUSE_OF_ORANGE_MEMBERS = [
-  // Add member emails below (one per line for easy management)
-  // Example: 'member@houseoforange.in',
-  
-  // Active members:
-  
+  'prathnaofi@gmail.com',
 ];
 
 /**
