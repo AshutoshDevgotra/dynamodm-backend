@@ -27,16 +27,30 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
     messagePreview: message.slice(0, 100),
   });
 
-  const account = await CreatorAccount.findOne({ userId: creatorId, isConnected: true }).select('+igAccessToken');
+  // Find the automation to get the correct Instagram account
+  const automation = await Automation.findById(automationRuleId).select('instagramAccountId instagramUserId');
+  if (!automation?.instagramAccountId) {
+    logger.error(`❌ Automation ${automationRuleId} has no Instagram account binding`);
+    throw new Error('Automation not bound to an Instagram account.');
+  }
+
+  // Use the automation's specific Instagram account, not just any connected account
+  const account = await CreatorAccount.findOne({ 
+    _id: automation.instagramAccountId,
+    userId: creatorId, 
+    isConnected: true,
+    igUserId: automation.instagramUserId || igUserId
+  }).select('+igAccessToken');
+  
   if (!account?.igAccessToken) {
-    logger.error(`❌ Creator ${creatorId} has no connected account or token is missing`);
-    const reconnectError = new Error('Creator Instagram account not connected or token missing.');
+    logger.error(`❌ Instagram account ${automation.instagramAccountId} not found or not connected for creator ${creatorId}`);
+    const reconnectError = new Error('Automation Instagram account not connected or token missing.');
     (reconnectError as any).requiresReconnect = true;
     throw reconnectError;
   }
 
   const accessToken = decryptToken(account.igAccessToken);
-  logger.info(`🔑 Token decrypted for creator ${creatorId}`);
+  logger.info(`🔑 Token decrypted for Instagram account ${account.igUsername || account.igUserId}`);
 
   // Only append ctaLink as plain text when there are no interactive buttons.
   // When buttons are present the URL lives inside the button payload —
@@ -46,7 +60,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   if (ctaLink && !buttons?.length) messageText += `\n\n${ctaLink}`;
 
   logger.info(`📡 Sending DM via Instagram API`, {
-    igUserId,
+    igUserId: account.igUserId,
     recipientId,
     messageLength: messageText.length,
   });
@@ -54,14 +68,14 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
   try {
     if (commentId) {
       try {
-        await privateReplyToComment(igUserId, commentId, messageText, accessToken, buttons, attachmentUrl);
+        await privateReplyToComment(account.igUserId, commentId, messageText, accessToken, buttons, attachmentUrl);
       } catch (error) {
         if (!buttons?.length || isInstagramSessionInvalidated(error)) throw error;
         // If private reply by commentId with template fails, attempt direct sendDM to recipientId
         let sentDirect = false;
         if (recipientId) {
           try {
-            await sendDM(igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
+            await sendDM(account.igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
             sentDirect = true;
             logger.info('Private reply failed with template, but direct sendDM with buttons succeeded', { recipientId });
           } catch (directErr) {
@@ -79,7 +93,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
             .map((button) => `👉 ${button.title}: ${button.url}`)
             .join('\n');
           await privateReplyToComment(
-            igUserId,
+            account.igUserId,
             commentId,
             buttonLinks ? `${messageText}\n\n${buttonLinks}` : messageText,
             accessToken,
@@ -87,7 +101,7 @@ export async function sendInstagramDM(data: DMJobData): Promise<void> {
         }
       }
     } else {
-      await sendDM(igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
+      await sendDM(account.igUserId, recipientId, messageText, accessToken, buttons, attachmentUrl);
     }
 
     logger.info(`✅ DM sent successfully to ${recipientId}`);
