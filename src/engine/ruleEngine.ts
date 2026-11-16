@@ -273,21 +273,22 @@ async function handleComment(creatorId: string, igUserId: string, comment: Comme
     if (followStep && encryptedAccessToken) {
       const followsCreator = await checkFollowerRelationship(igUserId, comment.from.id, decryptToken(encryptedAccessToken));
       if (!followsCreator) {
+        // Send follow request reminder (but don't skip the main DM)
         await queueCommentDM({
           creatorId,
           igUserId,
           recipientId: comment.from.id,
           commentId: eventTriggerType === 'STORY_REPLY' ? undefined : comment.id,
           rule,
-          message: 'First, follow us to receive the DM',
+          message: 'Please follow us! 🙏',
           username: comment.from.username,
           commentText: comment.text,
           postId: comment.media?.id,
-          jobId,
+          jobId: `${jobId}:follow-request`,
           buttons: igUsername ? followButtons(rule._id.toString(), igUsername) : undefined,
         });
-        logger.info(`Follow gate held resource DM for ${comment.from.id}`);
-        continue;
+        logger.info(`Follow First reminder sent to ${comment.from.id}, main DM will follow`);
+        // No continue here - main DM will be sent below
       }
     }
 
