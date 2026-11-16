@@ -18,6 +18,7 @@
 
 export const HOUSE_OF_ORANGE_MEMBERS = [
   'prathnaofi@gmail.com',
+  'astrooprathana@hmail.com'
 ];
 
 /**
