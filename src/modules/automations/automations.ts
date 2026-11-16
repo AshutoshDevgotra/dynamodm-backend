@@ -273,6 +273,11 @@ const formatAutomation = (auto: any) => {
 
   return {
     ...doc,
+    instagramAccount: doc.instagramAccountId && typeof doc.instagramAccountId === 'object' ? {
+      _id: doc.instagramAccountId._id,
+      igUsername: doc.instagramAccountId.igUsername,
+      profilePictureUrl: doc.instagramAccountId.profilePictureUrl,
+    } : undefined,
     keywords: doc.trigger?.keywords || [],
     triggerType: doc.trigger?.type?.toLowerCase() || 'comment',
     targetPosts: doc.trigger?.postId ? [doc.trigger.postId] : [],
@@ -299,23 +304,40 @@ const formatAutomation = (auto: any) => {
 // GET /api/automations
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const requestedAccountId = typeof req.query.instagramAccountId === 'string' ? req.query.instagramAccountId : '';
-  const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true, ...(requestedAccountId ? { _id: requestedAccountId } : {}) }).select('_id igUserId');
-  if (!account?.igUserId) {
+  
+  if (requestedAccountId) {
+    // Filter by specific Instagram account
+    const account = await CreatorAccount.findOne({ userId: req.user!.id, isConnected: true, _id: requestedAccountId }).select('_id igUserId');
+    if (!account?.igUserId) {
+      res.json({ success: true, data: { automations: [] } });
+      return;
+    }
+    const filter: Record<string, unknown> = { creatorId: req.user!.id, instagramAccountId: account._id, instagramUserId: account.igUserId };
+    const automations = await Automation.find(filter).sort({ createdAt: -1 });
+    res.json({ success: true, data: { automations: automations.map(formatAutomation) } });
+    return;
+  }
+
+  // No specific account requested - show automations from ALL connected accounts
+  const accounts = await CreatorAccount.find({ userId: req.user!.id, isConnected: true }).select('_id igUserId');
+  
+  if (accounts.length === 0) {
     res.json({ success: true, data: { automations: [] } });
     return;
   }
+
   // One-time compatibility migration for rules created before Instagram
-  // account binding was stored. It is scoped to this authenticated user, so
-  // it cannot expose another user's rules; once bound, account switching will
-  // keep the rule attached to its original Instagram account.
+  // account binding was stored. Bind to the first connected account.
+  const firstAccount = accounts[0];
   await Automation.updateMany(
     { creatorId: req.user!.id, instagramAccountId: { $exists: false } },
-    { $set: { instagramAccountId: account._id, instagramUserId: account.igUserId } },
+    { $set: { instagramAccountId: firstAccount._id, instagramUserId: firstAccount.igUserId } },
   );
-  const filter: Record<string, unknown> = { creatorId: req.user!.id };
-  filter.instagramAccountId = account._id;
-  filter.instagramUserId = account.igUserId;
-  const automations = await Automation.find(filter).sort({ createdAt: -1 });
+
+  // Fetch automations across all connected accounts
+  const accountIds = accounts.map(acc => acc._id);
+  const filter: Record<string, unknown> = { creatorId: req.user!.id, instagramAccountId: { $in: accountIds } };
+  const automations = await Automation.find(filter).populate('instagramAccountId', 'igUsername profilePictureUrl').sort({ createdAt: -1 });
   res.json({ success: true, data: { automations: automations.map(formatAutomation) } });
 });
 
